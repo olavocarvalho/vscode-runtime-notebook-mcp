@@ -1,0 +1,48 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build extension
+        run: npm run build
+
+      - name: Package extension
+        run: npx vsce package -o notebook-mcp-server.vsix
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: notebook-mcp-server.vsix
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish to VS Code Marketplace
+        if: success()
+        run: npx vsce publish -p ${{ secrets.VSCE_PAT }} --packagePath notebook-mcp-server.vsix
+        continue-on-error: true
+
+      - name: Publish to Open VSX
+        if: success()
+        run: npx ovsx publish notebook-mcp-server.vsix -p ${{ secrets.OVSX_PAT }}
+        continue-on-error: true
+

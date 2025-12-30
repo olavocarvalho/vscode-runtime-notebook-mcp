@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="planetGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#FF6B35"/>
+      <stop offset="50%" style="stop-color:#F7931E"/>
+      <stop offset="100%" style="stop-color:#FFB347"/>
+    </linearGradient>
+    <linearGradient id="ringGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#4ECDC4;stop-opacity:0.3"/>
+      <stop offset="30%" style="stop-color:#4ECDC4"/>
+      <stop offset="70%" style="stop-color:#45B7AA"/>
+      <stop offset="100%" style="stop-color:#4ECDC4;stop-opacity:0.3"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- Background -->
+  <circle cx="64" cy="64" r="60" fill="#1a1a2e"/>
+  
+  <!-- Stars -->
+  <circle cx="20" cy="25" r="1" fill="#fff" opacity="0.6"/>
+  <circle cx="100" cy="20" r="1.2" fill="#fff" opacity="0.8"/>
+  <circle cx="110" cy="85" r="0.8" fill="#fff" opacity="0.5"/>
+  <circle cx="15" cy="90" r="1" fill="#fff" opacity="0.7"/>
+  <circle cx="95" cy="105" r="0.8" fill="#fff" opacity="0.4"/>
+  <circle cx="30" cy="108" r="1" fill="#fff" opacity="0.6"/>
+  
+  <!-- Ring back -->
+  <path d="M 25 52 Q 64 40 103 52" fill="none" stroke="url(#ringGrad)" stroke-width="5" opacity="0.5"/>
+  
+  <!-- Saturn planet -->
+  <circle cx="64" cy="64" r="24" fill="url(#planetGrad)"/>
+  
+  <!-- Planet bands -->
+  <ellipse cx="64" cy="56" rx="18" ry="3" fill="#FFD89B" opacity="0.3"/>
+  <ellipse cx="64" cy="68" rx="20" ry="2.5" fill="#E85D04" opacity="0.25"/>
+  <ellipse cx="64" cy="75" rx="15" ry="2" fill="#FFD89B" opacity="0.2"/>
+  
+  <!-- Ring front -->
+  <path d="M 25 76 Q 64 88 103 76" fill="none" stroke="url(#ringGrad)" stroke-width="5"/>
+  
+  <!-- MCP Protocol nodes -->
+  <circle cx="64" cy="18" r="6" fill="#6366F1"/>
+  <circle cx="64" cy="18" r="3" fill="#A5B4FC"/>
+  
+  <circle cx="28" cy="100" r="6" fill="#6366F1"/>
+  <circle cx="28" cy="100" r="3" fill="#A5B4FC"/>
+  
+  <circle cx="100" cy="100" r="6" fill="#6366F1"/>
+  <circle cx="100" cy="100" r="3" fill="#A5B4FC"/>
+  
+  <!-- MCP Connection lines -->
+  <line x1="64" y1="24" x2="64" y2="40" stroke="#6366F1" stroke-width="2" opacity="0.8"/>
+  <line x1="32" y1="96" x2="48" y2="80" stroke="#6366F1" stroke-width="2" opacity="0.8"/>
+  <line x1="96" y1="96" x2="80" y2="80" stroke="#6366F1" stroke-width="2" opacity="0.8"/>
+  
+  <!-- Small dots on connections -->
+  <circle cx="64" cy="32" r="1.5" fill="#A5B4FC"/>
+  <circle cx="40" cy="88" r="1.5" fill="#A5B4FC"/>
+  <circle cx="88" cy="88" r="1.5" fill="#A5B4FC"/>
+</svg>
