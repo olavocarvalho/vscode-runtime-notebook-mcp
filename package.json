@@ -17,7 +17,9 @@
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["Other"],
+  "categories": [
+    "Other"
+  ],
   "activationEvents": [
     "onStartupFinished"
   ],
@@ -50,13 +52,16 @@
     "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
     "watch": "npm run build -- --watch",
     "lint": "eslint src --ext ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "package": "vsce package"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
     "@types/vscode": "^1.85.0",
     "esbuild": "^0.20.0",
-    "typescript": "^5.4.0"
+    "typescript": "^5.4.0",
+    "vitest": "^4.0.16"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.6.1",
