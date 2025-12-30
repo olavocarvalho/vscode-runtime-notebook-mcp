@@ -1,0 +1,55 @@
+{
+  "name": "notebook-mcp-server",
+  "displayName": "Notebook MCP Server",
+  "description": "MCP server for Jupyter notebook manipulation in VS Code",
+  "version": "0.1.0",
+  "publisher": "your-publisher",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "notebook-mcp.startServer",
+        "title": "Start Notebook MCP Server"
+      }
+    ],
+    "configuration": {
+      "title": "Notebook MCP Server",
+      "properties": {
+        "notebook-mcp.port": {
+          "type": "number",
+          "default": 49777,
+          "minimum": 1024,
+          "maximum": 65535,
+          "description": "Port number for the MCP server (default: 49777)"
+        }
+      }
+    }
+  },
+  "extensionDependencies": [
+    "ms-toolsai.jupyter"
+  ],
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
+    "watch": "npm run build -- --watch",
+    "lint": "eslint src --ext ts",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.20.0",
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.6.1",
+    "zod": "^3.23.8"
+  }
+}
