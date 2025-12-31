@@ -10,6 +10,9 @@ out-e2e/
 # VS Code Test
 .vscode-test/
 
+# E2E test fixtures (large notebooks)
+test/e2e/fixtures/
+
 # Logs
 *.log
 npm-debug.log*

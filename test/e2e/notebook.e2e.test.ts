@@ -13,10 +13,10 @@ suite("Notebook MCP E2E Tests", () => {
       await ext.activate();
     }
 
-    // Try to open the large notebook from workspace root
+    // Try to open the large notebook from test fixtures
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (workspaceFolders && workspaceFolders.length > 0) {
-      const largeNotebookPath = vscode.Uri.joinPath(workspaceFolders[0].uri, "large_notebook.ipynb");
+      const largeNotebookPath = vscode.Uri.joinPath(workspaceFolders[0].uri, "test/e2e/fixtures/large_notebook.ipynb");
       try {
         console.log(`Trying to open: ${largeNotebookPath.toString()}`);
         const doc = await vscode.workspace.openNotebookDocument(largeNotebookPath);
