@@ -1,5 +1,6 @@
 import * as http from "http";
 import * as crypto from "crypto";
+import * as vscode from "vscode";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { registerAllTools } from "./tools/index.js";
@@ -165,8 +166,14 @@ export async function startMCPServer(port: number = DEFAULT_PORT): Promise<Serve
           }
         }
       } else if (req.method === "GET" && req.url === "/health") {
+        const workspaceFolders = vscode.workspace.workspaceFolders;
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ status: "ok", server: "notebook-mcp-server" }));
+        res.end(JSON.stringify({
+          status: "ok",
+          server: "notebook-mcp-server",
+          workspace: workspaceFolders?.[0]?.uri.fsPath ?? null,
+          activeNotebook: vscode.window.activeNotebookEditor?.notebook.uri.fsPath ?? null
+        }));
       } else if (req.method === "POST" && req.url === "/release") {
         // Another window is requesting to take over - gracefully stop
         console.log("MCP Server: Received release request, stopping server synchronously");
