@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.3] - 2025-12-31
+
+### Added
+
+- `/health` endpoint now returns `workspace` and `activeNotebook` paths for easier debugging
+- `CLAUDE.md` project guide for AI agents
+
 ## [0.2.2] - 2025-12-31
 
 ### Added
