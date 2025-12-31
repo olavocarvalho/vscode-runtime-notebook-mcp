@@ -1,0 +1,22 @@
+# Source files (we ship bundled dist/)
+src/
+test/
+out-e2e/
+
+# Config files
+.vscode/
+.claude/
+.github/
+tsconfig.json
+vitest.config.ts
+.vscode-test.mjs
+
+# Development files
+node_modules/
+*.vsix
+.env
+.env.*
+.gitignore
+
+# Build artifacts
+*.map

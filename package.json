@@ -3,7 +3,7 @@
   "displayName": "Notebook MCP Server",
   "description": "MCP server for Jupyter notebook manipulation in VS Code",
   "version": "0.2.0",
-  "publisher": "olavocarvalho",
+  "publisher": "olavovieiradecarvalho",
   "license": "MIT",
   "icon": "icon.png",
   "repository": {
