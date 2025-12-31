@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { ListCellsInputSchema, ResponseFormat, ResponseFormatSchema, CellIndexSchema } from "../../schemas/index.js";
 import { parseOutputs, formatOutputsAsMarkdown } from "../../utils/output.js";
-import { insertCells, deleteCells, waitForCellExecution, generateCellId, editCellContent, moveCell } from "../../utils/notebook.js";
+import { insertCells, deleteCells, waitForCellExecution, generateCellId, editCellContent, moveCell, checkCanModifyNotebook, checkCanReadNotebook } from "../../utils/notebook.js";
 
 const GetCellContentInputSchema = z.object({
   index: CellIndexSchema,
@@ -297,17 +297,16 @@ Args:
   - response_format ('markdown' | 'json'): Output format (default: 'markdown')`,
     InsertCellInputSchema.shape,
     async (params) => {
-      const editor = vscode.window.activeNotebookEditor;
-
-      if (!editor) {
+      const accessCheck = checkCanModifyNotebook();
+      if (!accessCheck.allowed) {
         return {
-          content: [{ type: "text" as const, text: "Error: No active notebook. Open a .ipynb file first." }],
+          content: [{ type: "text" as const, text: `Error: ${accessCheck.error}` }],
           isError: true
         };
       }
 
       const parsed = InsertCellInputSchema.parse(params);
-      const notebook = editor.notebook;
+      const notebook = accessCheck.notebook!;
 
       // Create cell with tracking ID
       const cellId = generateCellId();
@@ -335,7 +334,7 @@ Args:
       const cellIndex = notebook.getCells().indexOf(cell);
 
       // Reveal the cell
-      editor.revealRange(
+      accessCheck.editor!.revealRange(
         new vscode.NotebookRange(cellIndex, cellIndex + 1),
         vscode.NotebookEditorRevealType.InCenter
       );
@@ -415,13 +414,13 @@ Args:
   - response_format ('markdown' | 'json'): Output format`,
     EditCellInputSchema.shape,
     async (params) => {
-      const editor = vscode.window.activeNotebookEditor;
-      if (!editor) {
-        return { content: [{ type: "text" as const, text: "Error: No active notebook." }], isError: true };
+      const accessCheck = checkCanModifyNotebook();
+      if (!accessCheck.allowed) {
+        return { content: [{ type: "text" as const, text: `Error: ${accessCheck.error}` }], isError: true };
       }
 
       const parsed = EditCellInputSchema.parse(params);
-      const notebook = editor.notebook;
+      const notebook = accessCheck.notebook!;
 
       if (parsed.index >= notebook.cellCount) {
         return { content: [{ type: "text" as const, text: `Error: Cell index ${parsed.index} out of range.` }], isError: true };
@@ -449,13 +448,13 @@ Args:
   - response_format ('markdown' | 'json'): Output format`,
     DeleteCellInputSchema.shape,
     async (params) => {
-      const editor = vscode.window.activeNotebookEditor;
-      if (!editor) {
-        return { content: [{ type: "text" as const, text: "Error: No active notebook." }], isError: true };
+      const accessCheck = checkCanModifyNotebook();
+      if (!accessCheck.allowed) {
+        return { content: [{ type: "text" as const, text: `Error: ${accessCheck.error}` }], isError: true };
       }
 
       const parsed = DeleteCellInputSchema.parse(params);
-      const notebook = editor.notebook;
+      const notebook = accessCheck.notebook!;
 
       if (parsed.index >= notebook.cellCount) {
         return { content: [{ type: "text" as const, text: `Error: Cell index ${parsed.index} out of range.` }], isError: true };
@@ -635,18 +634,18 @@ Args:
   - index (number): Cell index (0-based)`,
     ClearOutputsInputSchema.shape,
     async (params) => {
-      const editor = vscode.window.activeNotebookEditor;
-      if (!editor) {
-        return { content: [{ type: "text" as const, text: "Error: No active notebook." }], isError: true };
+      const accessCheck = checkCanModifyNotebook();
+      if (!accessCheck.allowed) {
+        return { content: [{ type: "text" as const, text: `Error: ${accessCheck.error}` }], isError: true };
       }
 
       const { index, response_format } = ClearOutputsInputSchema.parse(params);
-      if (index >= editor.notebook.cellCount) {
+      if (index >= accessCheck.notebook!.cellCount) {
         return { content: [{ type: "text" as const, text: `Error: Cell index ${index} out of range.` }], isError: true };
       }
 
       // Select the cell and clear its outputs
-      editor.selection = new vscode.NotebookRange(index, index + 1);
+      accessCheck.editor!.selection = new vscode.NotebookRange(index, index + 1);
       await vscode.commands.executeCommand("notebook.cell.clearOutputs");
 
       if (response_format === ResponseFormat.JSON) {
@@ -662,18 +661,18 @@ Args:
     `Clear outputs from all cells in the notebook.`,
     { response_format: ResponseFormatSchema },
     async (params) => {
-      const editor = vscode.window.activeNotebookEditor;
-      if (!editor) {
-        return { content: [{ type: "text" as const, text: "Error: No active notebook." }], isError: true };
+      const accessCheck = checkCanModifyNotebook();
+      if (!accessCheck.allowed) {
+        return { content: [{ type: "text" as const, text: `Error: ${accessCheck.error}` }], isError: true };
       }
 
       await vscode.commands.executeCommand("notebook.clearAllCellsOutputs");
 
       const { response_format } = ListCellsInputSchema.parse(params);
       if (response_format === ResponseFormat.JSON) {
-        return { content: [{ type: "text" as const, text: JSON.stringify({ cleared: true, cellCount: editor.notebook.cellCount }, null, 2) }] };
+        return { content: [{ type: "text" as const, text: JSON.stringify({ cleared: true, cellCount: accessCheck.notebook!.cellCount }, null, 2) }] };
       }
-      return { content: [{ type: "text" as const, text: `Cleared outputs from all ${editor.notebook.cellCount} cells` }] };
+      return { content: [{ type: "text" as const, text: `Cleared outputs from all ${accessCheck.notebook!.cellCount} cells` }] };
     }
   );
 
@@ -687,13 +686,13 @@ Args:
   - to_index (number): Target position`,
     MoveCellInputSchema.shape,
     async (params) => {
-      const editor = vscode.window.activeNotebookEditor;
-      if (!editor) {
-        return { content: [{ type: "text" as const, text: "Error: No active notebook." }], isError: true };
+      const accessCheck = checkCanModifyNotebook();
+      if (!accessCheck.allowed) {
+        return { content: [{ type: "text" as const, text: `Error: ${accessCheck.error}` }], isError: true };
       }
 
       const { from_index, to_index, response_format } = MoveCellInputSchema.parse(params);
-      const notebook = editor.notebook;
+      const notebook = accessCheck.notebook!;
 
       if (from_index >= notebook.cellCount || to_index >= notebook.cellCount) {
         return { content: [{ type: "text" as const, text: "Error: Cell index out of range." }], isError: true };
@@ -722,13 +721,13 @@ Args:
   - index (number, optional): Position to insert (default: append at end)`,
     BulkAddCellsInputSchema.shape,
     async (params) => {
-      const editor = vscode.window.activeNotebookEditor;
-      if (!editor) {
-        return { content: [{ type: "text" as const, text: "Error: No active notebook." }], isError: true };
+      const accessCheck = checkCanModifyNotebook();
+      if (!accessCheck.allowed) {
+        return { content: [{ type: "text" as const, text: `Error: ${accessCheck.error}` }], isError: true };
       }
 
       const { cells, index, response_format } = BulkAddCellsInputSchema.parse(params);
-      const notebook = editor.notebook;
+      const notebook = accessCheck.notebook!;
       const insertIndex = index !== undefined ? Math.min(index, notebook.cellCount) : notebook.cellCount;
 
       const cellDataArray = cells.map(c => {

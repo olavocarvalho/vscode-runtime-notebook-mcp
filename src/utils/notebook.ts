@@ -118,3 +118,59 @@ export async function moveCell(
   // Insert at target
   await insertCells(notebook.uri, adjustedIndex, [cellData]);
 }
+
+export interface NotebookAccessResult {
+  allowed: boolean;
+  notebook?: vscode.NotebookDocument;
+  editor?: vscode.NotebookEditor;
+  error?: string;
+}
+
+/**
+ * Check if notebook modifications are safe.
+ * Returns error if:
+ * - No active notebook
+ * - Window is not focused (modifications would happen in background)
+ */
+export function checkCanModifyNotebook(): NotebookAccessResult {
+  const editor = vscode.window.activeNotebookEditor;
+  if (!editor) {
+    return {
+      allowed: false,
+      error: "No active notebook. Open a .ipynb file first."
+    };
+  }
+
+  // Check if this window is focused
+  if (!vscode.window.state.focused) {
+    return {
+      allowed: false,
+      error: "Cannot modify notebook: This VS Code window is not focused.\n\nThe MCP server is running here but you appear to be working in another window.\n\nTo fix this:\n1. Switch to this VS Code window, OR\n2. Click '→ Activate' in the other window's status bar to move the server there"
+    };
+  }
+
+  return {
+    allowed: true,
+    notebook: editor.notebook,
+    editor
+  };
+}
+
+/**
+ * Check if notebook can be read (no focus requirement).
+ */
+export function checkCanReadNotebook(): NotebookAccessResult {
+  const editor = vscode.window.activeNotebookEditor;
+  if (!editor) {
+    return {
+      allowed: false,
+      error: "No active notebook. Open a .ipynb file first."
+    };
+  }
+
+  return {
+    allowed: true,
+    notebook: editor.notebook,
+    editor
+  };
+}

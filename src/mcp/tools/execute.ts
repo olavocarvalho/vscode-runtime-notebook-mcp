@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { ResponseFormat, ResponseFormatSchema } from "../../schemas/index.js";
-import { insertCells, deleteCells, waitForCellExecution, generateCellId } from "../../utils/notebook.js";
+import { insertCells, deleteCells, waitForCellExecution, generateCellId, checkCanModifyNotebook } from "../../utils/notebook.js";
 import { parseOutputs, formatOutputsAsMarkdown } from "../../utils/output.js";
 
 const ExecuteCodeInputSchema = z.object({
@@ -28,17 +28,17 @@ Args:
   - response_format ('markdown' | 'json'): Output format (default: 'markdown')`,
     ExecuteCodeInputSchema.shape,
     async (params) => {
-      const editor = vscode.window.activeNotebookEditor;
-
-      if (!editor) {
+      const accessCheck = checkCanModifyNotebook();
+      if (!accessCheck.allowed) {
         return {
-          content: [{ type: "text" as const, text: "Error: No active notebook. Open a .ipynb file first." }],
+          content: [{ type: "text" as const, text: `Error: ${accessCheck.error}` }],
           isError: true
         };
       }
 
       const parsed = ExecuteCodeInputSchema.parse(params);
-      const notebook = editor.notebook;
+      const notebook = accessCheck.notebook!;
+      const editor = accessCheck.editor!;
 
       // Create cell with tracking ID (Claude Code pattern)
       const cellId = generateCellId();

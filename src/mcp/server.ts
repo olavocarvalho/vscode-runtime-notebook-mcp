@@ -6,9 +6,82 @@ import { registerAllTools } from "./tools/index.js";
 
 const DEFAULT_PORT = 49777;
 
+export interface ServerStartResult {
+  port: number;
+  isExistingServer: boolean;
+}
+
+/**
+ * Check if an MCP server is already running on the given port
+ */
+export async function isServerRunning(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const req = http.request(
+      {
+        hostname: "127.0.0.1",
+        port,
+        path: "/health",
+        method: "GET",
+        timeout: 1000
+      },
+      (res) => {
+        let data = "";
+        res.on("data", (chunk) => { data += chunk; });
+        res.on("end", () => {
+          try {
+            const json = JSON.parse(data);
+            resolve(json.server === "notebook-mcp-server" && json.status === "ok");
+          } catch {
+            resolve(false);
+          }
+        });
+      }
+    );
+    req.on("error", () => resolve(false));
+    req.on("timeout", () => {
+      req.destroy();
+      resolve(false);
+    });
+    req.end();
+  });
+}
+
+/**
+ * Request another MCP server to release (stop) so this window can take over
+ */
+export async function requestServerRelease(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const req = http.request(
+      {
+        hostname: "127.0.0.1",
+        port,
+        path: "/release",
+        method: "POST",
+        timeout: 2000
+      },
+      (res) => {
+        resolve(res.statusCode === 200);
+      }
+    );
+    req.on("error", () => resolve(false));
+    req.on("timeout", () => {
+      req.destroy();
+      resolve(false);
+    });
+    req.end();
+  });
+}
+
 let server: McpServer | undefined;
 let httpServer: http.Server | undefined;
 const transports = new Map<string, StreamableHTTPServerTransport>();
+
+// Callback to notify extension when server is released
+let onReleaseCallback: (() => void) | undefined;
+
+export function setOnReleaseCallback(callback: () => void): void {
+  onReleaseCallback = callback;
+}
 
 export function createMCPServer(): McpServer {
   server = new McpServer({
@@ -23,7 +96,14 @@ export function createMCPServer(): McpServer {
   return server;
 }
 
-export async function startMCPServer(port: number = DEFAULT_PORT): Promise<number> {
+export async function startMCPServer(port: number = DEFAULT_PORT): Promise<ServerStartResult> {
+  // Check if a server is already running on the configured port
+  const existingServerRunning = await isServerRunning(port);
+  if (existingServerRunning) {
+    console.log(`MCP Server: Found existing server on port ${port}, deferring to it`);
+    return { port, isExistingServer: true };
+  }
+
   if (!server) {
     createMCPServer();
   }
@@ -87,17 +167,48 @@ export async function startMCPServer(port: number = DEFAULT_PORT): Promise<numbe
       } else if (req.method === "GET" && req.url === "/health") {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ status: "ok", server: "notebook-mcp-server" }));
+      } else if (req.method === "POST" && req.url === "/release") {
+        // Another window is requesting to take over - gracefully stop
+        console.log("MCP Server: Received release request, stopping server synchronously");
+
+        // Close all transports first
+        for (const transport of transports.values()) {
+          transport.close();
+        }
+        transports.clear();
+
+        // Respond success
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ released: true }));
+
+        // Close HTTP server after response is sent
+        httpServer?.close(() => {
+          httpServer = undefined;
+          server = undefined;
+          console.log("MCP Server: Released and stopped");
+          // Notify extension of release
+          if (onReleaseCallback) {
+            onReleaseCallback();
+          }
+        });
       } else {
         res.writeHead(404);
         res.end("Not found");
       }
     });
 
-    httpServer.on("error", (err: NodeJS.ErrnoException) => {
+    httpServer.on("error", async (err: NodeJS.ErrnoException) => {
       if (err.code === "EADDRINUSE") {
-        console.log(`Port ${port} in use, trying ${port + 1}`);
         httpServer?.close();
-        startMCPServer(port + 1).then(resolve).catch(reject);
+        // Check if the port is used by another notebook-mcp-server
+        const isOurServer = await isServerRunning(port);
+        if (isOurServer) {
+          console.log(`MCP Server: Found existing server on port ${port}, deferring to it`);
+          resolve({ port, isExistingServer: true });
+        } else {
+          console.log(`Port ${port} in use by another application, trying ${port + 1}`);
+          startMCPServer(port + 1).then(resolve).catch(reject);
+        }
       } else {
         reject(err);
       }
@@ -105,7 +216,7 @@ export async function startMCPServer(port: number = DEFAULT_PORT): Promise<numbe
 
     httpServer.listen(port, "127.0.0.1", () => {
       console.log(`MCP Server: Listening on http://127.0.0.1:${port}/mcp`);
-      resolve(port);
+      resolve({ port, isExistingServer: false });
     });
   });
 }
