@@ -4,7 +4,11 @@ node_modules/
 # Build output
 dist/
 out/
+out-e2e/
 *.vsix
+
+# VS Code Test
+.vscode-test/
 
 # Logs
 *.log

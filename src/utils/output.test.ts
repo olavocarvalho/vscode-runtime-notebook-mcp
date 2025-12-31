@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { formatOutputsAsMarkdown, CellOutput } from './output';
+import { describe, expect, it } from 'vitest';
+import { CellOutput, formatOutputsAsMarkdown } from './output';
 
 describe('formatOutputsAsMarkdown', () => {
   it('formats text output with code block', () => {

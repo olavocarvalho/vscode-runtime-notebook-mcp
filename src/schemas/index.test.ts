@@ -1,10 +1,10 @@
-import { describe, it, expect } from 'vitest';
-import { 
-  ResponseFormat, 
-  ResponseFormatSchema, 
-  CellIndexSchema, 
+import { describe, expect, it } from 'vitest';
+import {
+  CellIndexSchema,
   CodeSchema,
-  ListCellsInputSchema 
+  ListCellsInputSchema,
+  ResponseFormat,
+  ResponseFormatSchema
 } from './index';
 
 describe('ResponseFormatSchema', () => {

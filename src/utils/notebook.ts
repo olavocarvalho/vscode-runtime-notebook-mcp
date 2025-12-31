@@ -72,3 +72,49 @@ export async function waitForCellExecution(
 export function generateCellId(): string {
   return Math.random().toString(36).substring(2, 15);
 }
+
+/**
+ * Edit the content of an existing cell
+ */
+export async function editCellContent(
+  cell: vscode.NotebookCell,
+  newContent: string
+): Promise<void> {
+  const edit = new vscode.WorkspaceEdit();
+  const fullRange = new vscode.Range(
+    0,
+    0,
+    cell.document.lineCount,
+    0
+  );
+  edit.replace(cell.document.uri, fullRange, newContent);
+  await vscode.workspace.applyEdit(edit);
+}
+
+/**
+ * Move a cell from one position to another
+ */
+export async function moveCell(
+  notebook: vscode.NotebookDocument,
+  fromIndex: number,
+  toIndex: number
+): Promise<void> {
+  const cell = notebook.cellAt(fromIndex);
+
+  // Copy cell data
+  const cellData = new vscode.NotebookCellData(
+    cell.kind,
+    cell.document.getText(),
+    cell.document.languageId
+  );
+  cellData.metadata = { ...cell.metadata };
+
+  // Delete from source
+  await deleteCells(notebook.uri, fromIndex, 1);
+
+  // Adjust target index if source was before target
+  const adjustedIndex = fromIndex < toIndex ? toIndex - 1 : toIndex;
+
+  // Insert at target
+  await insertCells(notebook.uri, adjustedIndex, [cellData]);
+}

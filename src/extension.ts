@@ -91,19 +91,38 @@ async function promptKernelIfNeeded(notebookUri: vscode.Uri): Promise<void> {
   }
 
   try {
+    // First verify we have an active notebook editor for this URI
+    const editor = vscode.window.activeNotebookEditor;
+    if (!editor || editor.notebook.uri.toString() !== uriString) {
+      // No active editor for this notebook - skip kernel check
+      return;
+    }
+
     const ext = vscode.extensions.getExtension("ms-toolsai.jupyter");
     if (!ext) return;
 
-    const jupyter = await ext.activate();
-    const kernel = await jupyter.kernels.getKernel(notebookUri);
+    // Ensure extension is activated
+    if (!ext.isActive) {
+      await ext.activate();
+    }
+
+    const jupyter = ext.exports;
+    if (!jupyter?.kernels?.getKernel) {
+      // Jupyter API not available
+      return;
+    }
+
+    // Pass the notebook document instead of URI for better compatibility
+    const kernel = await jupyter.kernels.getKernel(editor.notebook);
 
     // No kernel connected - show picker
     if (!kernel) {
       promptedNotebooks.add(uriString);
       await vscode.commands.executeCommand("notebook.selectKernel");
     }
-  } catch (error) {
-    console.log("Notebook MCP Server: Kernel check failed:", error);
+  } catch {
+    // Silently ignore kernel check errors - this is a non-critical feature
+    // The user can always manually select a kernel if needed
   }
 }
 

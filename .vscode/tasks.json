@@ -15,6 +15,14 @@
       "problemMatcher": [],
       "isBackground": true,
       "label": "npm: watch"
+    },
+    {
+      "type": "npm",
+      "script": "build:e2e",
+      "group": "build",
+      "problemMatcher": [],
+      "label": "npm: build:e2e",
+      "dependsOn": "npm: build"
     }
   ]
 }

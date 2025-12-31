@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { ListCellsInputSchema, ResponseFormat, ResponseFormatSchema, CellIndexSchema } from "../../schemas/index.js";
 import { parseOutputs, formatOutputsAsMarkdown } from "../../utils/output.js";
-import { insertCells, waitForCellExecution, generateCellId } from "../../utils/notebook.js";
+import { insertCells, deleteCells, waitForCellExecution, generateCellId, editCellContent, moveCell } from "../../utils/notebook.js";
 
 const GetCellContentInputSchema = z.object({
   index: CellIndexSchema,
@@ -21,6 +21,49 @@ const InsertCellInputSchema = z.object({
   index: z.number().int().min(0).optional().describe("Position to insert (default: append at end)"),
   language: z.string().default("python").describe("Language for code cells"),
   execute: z.boolean().default(false).describe("Execute the cell after insertion (code cells only)"),
+  response_format: ResponseFormatSchema
+}).strict();
+
+const EditCellInputSchema = z.object({
+  index: CellIndexSchema,
+  content: z.string().describe("New content for the cell"),
+  response_format: ResponseFormatSchema
+}).strict();
+
+const DeleteCellInputSchema = z.object({
+  index: CellIndexSchema,
+  response_format: ResponseFormatSchema
+}).strict();
+
+const GetOutlineInputSchema = z.object({
+  response_format: ResponseFormatSchema
+}).strict();
+
+const SearchInputSchema = z.object({
+  query: z.string().min(1).describe("Search term"),
+  case_sensitive: z.boolean().default(false).describe("Case-sensitive search"),
+  context_lines: z.number().int().min(0).max(3).default(1).describe("Lines of context around matches"),
+  response_format: ResponseFormatSchema
+}).strict();
+
+const ClearOutputsInputSchema = z.object({
+  index: CellIndexSchema,
+  response_format: ResponseFormatSchema
+}).strict();
+
+const MoveCellInputSchema = z.object({
+  from_index: CellIndexSchema.describe("Current cell index"),
+  to_index: CellIndexSchema.describe("Target cell index"),
+  response_format: ResponseFormatSchema
+}).strict();
+
+const BulkAddCellsInputSchema = z.object({
+  cells: z.array(z.object({
+    content: z.string(),
+    type: z.enum(["code", "markdown"]).default("code"),
+    language: z.string().default("python")
+  })).min(1).describe("Array of cells to add"),
+  index: z.number().int().min(0).optional().describe("Position to insert (default: end)"),
   response_format: ResponseFormatSchema
 }).strict();
 
@@ -358,6 +401,352 @@ Args:
       return {
         content: [{ type: "text" as const, text: lines.join("\n") }]
       };
+    }
+  );
+
+  // notebook_edit_cell
+  server.tool(
+    "notebook_edit_cell",
+    `Replace the content of an existing cell.
+
+Args:
+  - index (number): Cell index (0-based)
+  - content (string): New content for the cell
+  - response_format ('markdown' | 'json'): Output format`,
+    EditCellInputSchema.shape,
+    async (params) => {
+      const editor = vscode.window.activeNotebookEditor;
+      if (!editor) {
+        return { content: [{ type: "text" as const, text: "Error: No active notebook." }], isError: true };
+      }
+
+      const parsed = EditCellInputSchema.parse(params);
+      const notebook = editor.notebook;
+
+      if (parsed.index >= notebook.cellCount) {
+        return { content: [{ type: "text" as const, text: `Error: Cell index ${parsed.index} out of range.` }], isError: true };
+      }
+
+      const cell = notebook.cellAt(parsed.index);
+      await editCellContent(cell, parsed.content);
+
+      const result = { index: parsed.index, updated: true };
+
+      if (parsed.response_format === ResponseFormat.JSON) {
+        return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
+      }
+      return { content: [{ type: "text" as const, text: `Updated cell ${parsed.index}` }] };
+    }
+  );
+
+  // notebook_delete_cell
+  server.tool(
+    "notebook_delete_cell",
+    `Delete a cell from the notebook.
+
+Args:
+  - index (number): Cell index to delete (0-based)
+  - response_format ('markdown' | 'json'): Output format`,
+    DeleteCellInputSchema.shape,
+    async (params) => {
+      const editor = vscode.window.activeNotebookEditor;
+      if (!editor) {
+        return { content: [{ type: "text" as const, text: "Error: No active notebook." }], isError: true };
+      }
+
+      const parsed = DeleteCellInputSchema.parse(params);
+      const notebook = editor.notebook;
+
+      if (parsed.index >= notebook.cellCount) {
+        return { content: [{ type: "text" as const, text: `Error: Cell index ${parsed.index} out of range.` }], isError: true };
+      }
+
+      await deleteCells(notebook.uri, parsed.index, 1);
+
+      const result = { deletedIndex: parsed.index, newCellCount: notebook.cellCount };
+
+      if (parsed.response_format === ResponseFormat.JSON) {
+        return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
+      }
+      return { content: [{ type: "text" as const, text: `Deleted cell ${parsed.index}. New cell count: ${notebook.cellCount}` }] };
+    }
+  );
+
+  // notebook_get_outline
+  server.tool(
+    "notebook_get_outline",
+    `Get a structured outline of the notebook showing markdown headings, function definitions, and class definitions.
+
+Useful for navigating large notebooks without reading all cell contents.`,
+    GetOutlineInputSchema.shape,
+    async (params) => {
+      const editor = vscode.window.activeNotebookEditor;
+      if (!editor) {
+        return { content: [{ type: "text" as const, text: "Error: No active notebook." }], isError: true };
+      }
+
+      const { response_format } = GetOutlineInputSchema.parse(params);
+      const outline: Array<{
+        cellIndex: number;
+        cellType: string;
+        lineCount: number;
+        items: Array<{ type: string; level?: number; name: string; line: number }>;
+      }> = [];
+
+      for (const cell of editor.notebook.getCells()) {
+        const text = cell.document.getText();
+        const lines = text.split("\n");
+        const items: Array<{ type: string; level?: number; name: string; line: number }> = [];
+
+        if (cell.kind === vscode.NotebookCellKind.Markup) {
+          // Extract markdown headings
+          lines.forEach((line, lineNum) => {
+            const match = line.match(/^(#{1,6})\s+(.+)$/);
+            if (match) {
+              items.push({ type: "heading", level: match[1].length, name: match[2].trim(), line: lineNum });
+            }
+          });
+        } else {
+          // Extract Python functions and classes
+          lines.forEach((line, lineNum) => {
+            const funcMatch = line.match(/^(?:async\s+)?def\s+(\w+)\s*\(/);
+            const classMatch = line.match(/^class\s+(\w+)/);
+            if (funcMatch) {
+              items.push({ type: "function", name: funcMatch[1], line: lineNum });
+            } else if (classMatch) {
+              items.push({ type: "class", name: classMatch[1], line: lineNum });
+            }
+          });
+        }
+
+        outline.push({
+          cellIndex: cell.index,
+          cellType: cell.kind === vscode.NotebookCellKind.Code ? "code" : "markdown",
+          lineCount: lines.length,
+          items
+        });
+      }
+
+      if (response_format === ResponseFormat.JSON) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ outline }, null, 2) }] };
+      }
+
+      // Markdown format
+      const output = ["# Notebook Outline", ""];
+      for (const entry of outline) {
+        if (entry.items.length > 0) {
+          for (const item of entry.items) {
+            const icon = item.type === "heading" ? "#".repeat(item.level || 1)
+                       : item.type === "class" ? "📦" : "🔧";
+            output.push(`${icon} **${item.name}** (cell ${entry.cellIndex}:${item.line})`);
+          }
+        }
+      }
+      if (output.length === 2) output.push("_No headings, functions, or classes found._");
+
+      return { content: [{ type: "text" as const, text: output.join("\n") }] };
+    }
+  );
+
+  // notebook_search
+  server.tool(
+    "notebook_search",
+    `Search all cells for a keyword and return matches with context.
+
+Args:
+  - query (string): Search term
+  - case_sensitive (boolean): Case-sensitive search (default: false)
+  - context_lines (number): Lines of context around matches (0-3, default: 1)
+  - response_format ('markdown' | 'json'): Output format`,
+    SearchInputSchema.shape,
+    async (params) => {
+      const editor = vscode.window.activeNotebookEditor;
+      if (!editor) {
+        return { content: [{ type: "text" as const, text: "Error: No active notebook." }], isError: true };
+      }
+
+      const { query, case_sensitive, context_lines, response_format } = SearchInputSchema.parse(params);
+      const results: Array<{
+        cellIndex: number;
+        cellType: string;
+        matches: Array<{ line: number; text: string; context?: string[] }>;
+      }> = [];
+
+      for (const cell of editor.notebook.getCells()) {
+        const text = cell.document.getText();
+        const lines = text.split("\n");
+        const searchQuery = case_sensitive ? query : query.toLowerCase();
+        const cellMatches: Array<{ line: number; text: string; context?: string[] }> = [];
+
+        lines.forEach((line, lineNum) => {
+          const lineToSearch = case_sensitive ? line : line.toLowerCase();
+          if (lineToSearch.includes(searchQuery)) {
+            const match: { line: number; text: string; context?: string[] } = {
+              line: lineNum,
+              text: line.trim().substring(0, 100)
+            };
+            if (context_lines > 0) {
+              const start = Math.max(0, lineNum - context_lines);
+              const end = Math.min(lines.length, lineNum + context_lines + 1);
+              match.context = lines.slice(start, end);
+            }
+            cellMatches.push(match);
+          }
+        });
+
+        if (cellMatches.length > 0) {
+          results.push({
+            cellIndex: cell.index,
+            cellType: cell.kind === vscode.NotebookCellKind.Code ? "code" : "markdown",
+            matches: cellMatches
+          });
+        }
+      }
+
+      const totalMatches = results.reduce((sum, r) => sum + r.matches.length, 0);
+
+      if (response_format === ResponseFormat.JSON) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ query, totalMatches, results }, null, 2) }] };
+      }
+
+      // Markdown format
+      const output = [`# Search: "${query}"`, "", `**${totalMatches}** matches in **${results.length}** cells`, ""];
+      for (const r of results) {
+        output.push(`## Cell ${r.cellIndex} (${r.cellType})`);
+        for (const m of r.matches) {
+          output.push(`- Line ${m.line}: \`${m.text}\``);
+          if (m.context) {
+            output.push("```", ...m.context, "```");
+          }
+        }
+      }
+      if (results.length === 0) output.push("_No matches found._");
+
+      return { content: [{ type: "text" as const, text: output.join("\n") }] };
+    }
+  );
+
+  // notebook_clear_outputs
+  server.tool(
+    "notebook_clear_outputs",
+    `Clear the outputs of a specific cell.
+
+Args:
+  - index (number): Cell index (0-based)`,
+    ClearOutputsInputSchema.shape,
+    async (params) => {
+      const editor = vscode.window.activeNotebookEditor;
+      if (!editor) {
+        return { content: [{ type: "text" as const, text: "Error: No active notebook." }], isError: true };
+      }
+
+      const { index, response_format } = ClearOutputsInputSchema.parse(params);
+      if (index >= editor.notebook.cellCount) {
+        return { content: [{ type: "text" as const, text: `Error: Cell index ${index} out of range.` }], isError: true };
+      }
+
+      // Select the cell and clear its outputs
+      editor.selection = new vscode.NotebookRange(index, index + 1);
+      await vscode.commands.executeCommand("notebook.cell.clearOutputs");
+
+      if (response_format === ResponseFormat.JSON) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ index, cleared: true }, null, 2) }] };
+      }
+      return { content: [{ type: "text" as const, text: `Cleared outputs for cell ${index}` }] };
+    }
+  );
+
+  // notebook_clear_all_outputs
+  server.tool(
+    "notebook_clear_all_outputs",
+    `Clear outputs from all cells in the notebook.`,
+    { response_format: ResponseFormatSchema },
+    async (params) => {
+      const editor = vscode.window.activeNotebookEditor;
+      if (!editor) {
+        return { content: [{ type: "text" as const, text: "Error: No active notebook." }], isError: true };
+      }
+
+      await vscode.commands.executeCommand("notebook.clearAllCellsOutputs");
+
+      const { response_format } = ListCellsInputSchema.parse(params);
+      if (response_format === ResponseFormat.JSON) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ cleared: true, cellCount: editor.notebook.cellCount }, null, 2) }] };
+      }
+      return { content: [{ type: "text" as const, text: `Cleared outputs from all ${editor.notebook.cellCount} cells` }] };
+    }
+  );
+
+  // notebook_move_cell
+  server.tool(
+    "notebook_move_cell",
+    `Move a cell to a different position in the notebook.
+
+Args:
+  - from_index (number): Current cell index
+  - to_index (number): Target position`,
+    MoveCellInputSchema.shape,
+    async (params) => {
+      const editor = vscode.window.activeNotebookEditor;
+      if (!editor) {
+        return { content: [{ type: "text" as const, text: "Error: No active notebook." }], isError: true };
+      }
+
+      const { from_index, to_index, response_format } = MoveCellInputSchema.parse(params);
+      const notebook = editor.notebook;
+
+      if (from_index >= notebook.cellCount || to_index >= notebook.cellCount) {
+        return { content: [{ type: "text" as const, text: "Error: Cell index out of range." }], isError: true };
+      }
+
+      if (from_index === to_index) {
+        return { content: [{ type: "text" as const, text: "Cell already at target position." }] };
+      }
+
+      await moveCell(notebook, from_index, to_index);
+
+      if (response_format === ResponseFormat.JSON) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ from: from_index, to: to_index, moved: true }, null, 2) }] };
+      }
+      return { content: [{ type: "text" as const, text: `Moved cell from ${from_index} to ${to_index}` }] };
+    }
+  );
+
+  // notebook_bulk_add_cells
+  server.tool(
+    "notebook_bulk_add_cells",
+    `Add multiple cells to the notebook in a single operation.
+
+Args:
+  - cells (array): Array of {content, type, language} objects
+  - index (number, optional): Position to insert (default: append at end)`,
+    BulkAddCellsInputSchema.shape,
+    async (params) => {
+      const editor = vscode.window.activeNotebookEditor;
+      if (!editor) {
+        return { content: [{ type: "text" as const, text: "Error: No active notebook." }], isError: true };
+      }
+
+      const { cells, index, response_format } = BulkAddCellsInputSchema.parse(params);
+      const notebook = editor.notebook;
+      const insertIndex = index !== undefined ? Math.min(index, notebook.cellCount) : notebook.cellCount;
+
+      const cellDataArray = cells.map(c => {
+        const kind = c.type === "code" ? vscode.NotebookCellKind.Code : vscode.NotebookCellKind.Markup;
+        const lang = c.type === "code" ? c.language : "markdown";
+        return new vscode.NotebookCellData(kind, c.content, lang);
+      });
+
+      await insertCells(notebook.uri, insertIndex, cellDataArray);
+
+      if (response_format === ResponseFormat.JSON) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({
+          inserted: cells.length,
+          startIndex: insertIndex,
+          newCellCount: notebook.cellCount
+        }, null, 2) }] };
+      }
+      return { content: [{ type: "text" as const, text: `Added ${cells.length} cells at index ${insertIndex}` }] };
     }
   );
 }

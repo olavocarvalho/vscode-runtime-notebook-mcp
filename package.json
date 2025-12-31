@@ -54,12 +54,19 @@
     "lint": "eslint src --ext ts",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e": "npm run build && npm run build:e2e && vscode-test",
+    "test:e2e:watch": "npm run build:e2e && vscode-test --watch 'out-e2e/**/*.js'",
+    "build:e2e": "tsc -p ./test/e2e/tsconfig.json",
     "package": "vsce package"
   },
   "devDependencies": {
+    "@types/mocha": "^10.0.10",
     "@types/node": "^20.11.0",
     "@types/vscode": "^1.85.0",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2",
     "esbuild": "^0.20.0",
+    "mocha": "^11.7.5",
     "typescript": "^5.4.0",
     "vitest": "^4.0.16"
   },
