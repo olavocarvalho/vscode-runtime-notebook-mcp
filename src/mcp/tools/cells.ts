@@ -67,6 +67,11 @@ const BulkAddCellsInputSchema = z.object({
   response_format: ResponseFormatSchema
 }).strict();
 
+const RunCellInputSchema = z.object({
+  index: CellIndexSchema,
+  response_format: ResponseFormatSchema
+}).strict();
+
 export function registerCellTools(server: McpServer) {
   // notebook_list_open
   server.tool(
@@ -746,6 +751,119 @@ Args:
         }, null, 2) }] };
       }
       return { content: [{ type: "text" as const, text: `Added ${cells.length} cells at index ${insertIndex}` }] };
+    }
+  );
+
+  // notebook_run_cell
+  server.tool(
+    "notebook_run_cell",
+    `Execute an existing cell in the notebook and return its output.
+
+Use this to run a cell that already exists in the notebook. The cell and its output will persist in the notebook UI.
+
+Args:
+  - index (number): Cell index to execute (0-based)
+  - response_format ('markdown' | 'json'): Output format (default: 'markdown')`,
+    RunCellInputSchema.shape,
+    async (params) => {
+      const accessCheck = checkCanModifyNotebook();
+      if (!accessCheck.allowed) {
+        return {
+          content: [{ type: "text" as const, text: `Error: ${accessCheck.error}` }],
+          isError: true
+        };
+      }
+
+      const parsed = RunCellInputSchema.parse(params);
+      const notebook = accessCheck.notebook!;
+      const editor = accessCheck.editor!;
+
+      if (parsed.index >= notebook.cellCount) {
+        return {
+          content: [{ type: "text" as const, text: `Error: Cell index ${parsed.index} out of range (0-${notebook.cellCount - 1}).` }],
+          isError: true
+        };
+      }
+
+      const cell = notebook.cellAt(parsed.index);
+
+      // Only code cells can be executed
+      if (cell.kind !== vscode.NotebookCellKind.Code) {
+        return {
+          content: [{ type: "text" as const, text: `Error: Cell ${parsed.index} is a markdown cell. Only code cells can be executed.` }],
+          isError: true
+        };
+      }
+
+      // Add tracking ID to the cell metadata if not present
+      const cellId = cell.metadata?.id || generateCellId();
+      if (!cell.metadata?.id) {
+        // Note: We can't easily update metadata on existing cells, so we use the index as fallback
+      }
+
+      // Reveal and select the cell
+      editor.revealRange(
+        new vscode.NotebookRange(parsed.index, parsed.index + 1),
+        vscode.NotebookEditorRevealType.InCenter
+      );
+
+      // Execute the cell
+      await vscode.commands.executeCommand("notebook.cell.execute", {
+        ranges: [{ start: parsed.index, end: parsed.index + 1 }],
+        document: notebook.uri
+      });
+
+      // Wait for execution to complete by polling executionSummary
+      const timeout = 60000;
+      const startTime = Date.now();
+      let executedCell = cell;
+
+      while (Date.now() - startTime < timeout) {
+        // Re-fetch the cell to get updated execution state
+        executedCell = notebook.cellAt(parsed.index);
+        if (typeof executedCell.executionSummary?.success === 'boolean') {
+          break;
+        }
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+
+      if (typeof executedCell.executionSummary?.success !== 'boolean') {
+        return {
+          content: [{ type: "text" as const, text: "Error: Cell execution timed out." }],
+          isError: true
+        };
+      }
+
+      // Parse outputs
+      const outputs = parseOutputs(executedCell.outputs);
+
+      const result = {
+        success: executedCell.executionSummary?.success ?? false,
+        cellIndex: parsed.index,
+        executionOrder: executedCell.executionSummary?.executionOrder ?? null,
+        outputs
+      };
+
+      if (parsed.response_format === ResponseFormat.JSON) {
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }]
+        };
+      }
+
+      // Markdown format
+      const lines = [`# Cell ${parsed.index} Execution Result`, ""];
+      if (result.success) {
+        lines.push(`**Status**: Success (execution #${result.executionOrder})`);
+      } else {
+        lines.push(`**Status**: Failed`);
+      }
+      lines.push("");
+      lines.push("## Output");
+      lines.push(formatOutputsAsMarkdown(outputs));
+
+      return {
+        content: [{ type: "text" as const, text: lines.join("\n") }]
+      };
     }
   );
 }

@@ -51,8 +51,8 @@ export async function waitForCellExecution(
         return;
       }
 
-      // Check if execution completed (success is defined, not undefined)
-      if (cell.executionSummary?.success !== undefined) {
+      // Check if execution completed (success is a boolean, not undefined)
+      if (typeof cell.executionSummary?.success === 'boolean') {
         clearInterval(interval);
         resolve(cell);
         return;

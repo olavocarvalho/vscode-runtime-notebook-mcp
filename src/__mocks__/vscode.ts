@@ -31,3 +31,9 @@ export const NotebookCellKind = {
   Markup: 2
 };
 
+// Window state for multi-window tests
+export const window = {
+  activeNotebookEditor: undefined as any,
+  state: { focused: true }
+};
+

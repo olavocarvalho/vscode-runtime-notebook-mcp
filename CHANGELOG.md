@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.2] - 2025-12-31
+
+### Added
+
+- `notebook_run_cell` - Execute an existing cell by index without creating duplicates
+
+### Changed
+
+- Removed `notebook_execute_code` tool (redundant with `notebook_insert_cell` + `execute: true`)
+- Cell execution now always persists in notebook UI (matches Claude Code behavior)
+- Simplified tool set from 16 to 15 tools
+
+### Fixed
+
+- Fixed cell outputs not showing after MCP execution (wait condition bug in `waitForCellExecution`)
+- Fixed cell duplication when agent asked to run existing cells
+
 ## [0.2.0] - 2025-12-31
 
 ### Added
