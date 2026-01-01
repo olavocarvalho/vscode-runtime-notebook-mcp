@@ -2,10 +2,10 @@
   "name": "notebook-mcp-server",
   "displayName": "Notebook MCP Server",
   "description": "MCP server for Jupyter notebook manipulation in VS Code",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "publisher": "olavovieiradecarvalho",
   "license": "MIT",
-  "icon": "icon.png",
+  "icon": "images/icon.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/olavocarvalho/vscode-runtime-notebook-mcp"

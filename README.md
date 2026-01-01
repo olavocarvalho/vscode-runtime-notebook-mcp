@@ -1,23 +1,63 @@
-# Notebook MCP Server
 
-A VS Code extension that exposes Jupyter notebook manipulation via MCP (Model Context Protocol).
+# Notebook MCP Server
+![Notebook MCP Server](images/header.png)
+
+A VS Code / Cursor extension that exposes Jupyter notebook manipulation via MCP (Model Context Protocol). Works with Claude Code, Cursor Agent, Windsurf, and any MCP-compatible AI assistant.
 
 > [!IMPORTANT]
-> **Zero configuration required.** Install the extension, add the MCP endpoint to your client, done. No external servers, no tokens, no Python environments to manage.
+> **This project is still pre-alpha** so it's very rough on the edge. Working in multiple windows is unstable.
 
-## Why Runtime API?
+## Why connect to VS Code Runtime API?
 
-Most Jupyter MCP servers read/write `.ipynb` files directly. This extension uses **VS Code's Runtime Notebook API** instead:
+There are currently two main architectures to give AI agents access to Jupyter notebooks. This project was heavily inspired by both - kudos to these teams for pioneering the space:
 
-| File-based MCPs | Runtime API (this extension) |
-|-----------------|------------------------------|
-| Parse JSON, write to disk | Direct memory access |
-| Manual refresh needed | Instant UI sync |
-| Conflicts with open editors | Works with live notebooks |
-| Separate kernel management | Uses your running kernel |
-| Setup: server + tokens + URLs | Setup: just install |
+### Architecture 1: File-based (e.g., [cursor-notebook-mcp](https://github.com/jbeno/cursor-notebook-mcp))
 
-When the AI modifies a cell, you see it immediately. When it executes code, it uses your running kernel.
+These servers read/write `.ipynb` files directly using libraries like `nbformat`.
+
+**Pros:** No server dependencies, works out-of-the-box
+
+**Cons:**
+- **Cannot execute code** - agents can only edit cells, user must run them manually
+- UI sync issues - VS Code may show stale content until you revert/reopen
+- The `.ipynb` JSON format is verbose (~3x more tokens than raw code)
+- Race conditions if you edit while agent writes
+
+### Architecture 2: Jupyter Server API (e.g., [jupyter-mcp-server](https://github.com/datalayer/jupyter-mcp-server))
+
+These servers connect to Jupyter's REST API and can execute code through the kernel.
+
+**Pros:** Can execute code, **best choice for standalone remote JupyterLab/JupyterHub deployments**
+
+**Cons:**
+- Requires running JupyterLab separately (`jupyter lab --port 8888`)
+- Auth setup: tokens, URLs, environment variables
+- You end up running two UIs: one for notebook and another for AI
+- If you open the notebook in VS Code you create another source of truth (Jupyter server state vs your editor)
+
+### Architecture 3: VS Code / Cursor Runtime API (this extension)
+
+We're introducing a third architecture - hooking directly into Cursor/VS Code's Notebook API, the same API the editor uses internally.
+
+**Pros:**
+- Zero config - just install, server starts automatically
+- **Faster reads** (direct memory access, no serialization)
+- Executes code in your existing kernel (the one VS Code already manages)
+- Changes appear instantly in the editor with full undo/redo support
+- Single source of truth: what you see is what the agent sees
+- Works with remote kernels - if VS Code connects to a remote Jupyter server, so does the agent
+
+**Cons:**
+- Only works inside VS Code / Cursor (won't help if you use JupyterLab web UI)
+
+### When to use what
+
+| Use case | Recommended |
+|----------|-------------|
+| VS Code / Cursor + AI coding | **This extension** |
+| Remote VS Code / Cursor (tunnels, containers, SSH) | **This extension** |
+| Standalone JupyterLab/JupyterHub server | Datalayer |
+| Just edit cells, no execution needed | File-based |
 
 ## Features
 
@@ -115,7 +155,7 @@ All tools support `response_format` parameter (`"markdown"` or `"json"`).
 
 ## Setup
 
-1. Install the extension in VS Code
+1. Install the extension in VS Code or Cursor
 2. Add to your MCP client config:
 
 ```json
@@ -128,8 +168,8 @@ All tools support `response_format` parameter (`"markdown"` or `"json"`).
 }
 ```
 
-> [!TIP]
-> The server starts automatically when VS Code opens. Look for the `🪐 :49777` indicator in the status bar.
+> [!ATTENTION]
+> The server starts automatically when VS Code / Cursor opens. Look for the `🪐 :49777` indicator in the status bar.
 
 ### Configuration
 
@@ -153,14 +193,14 @@ Tested with a 471-cell notebook (~2.8MB, 1MB outputs):
 
 ## Requirements
 
-- VS Code 1.85+
+- VS Code 1.85+ or Cursor 0.43+
 - [Jupyter extension](https://marketplace.visualstudio.com/items?itemName=ms-toolsai.jupyter)
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                              VS Code                                    │
+│                         VS Code / Cursor                                │
 │                                                                         │
 │  ┌───────────────────────────────────────────────────────────────────┐  │
 │  │                    Jupyter Extension                              │  │
@@ -191,9 +231,9 @@ Tested with a 471-cell notebook (~2.8MB, 1MB outputs):
 ## How It Works
 
 1. Extension embeds an HTTP-based MCP server (port 49777)
-2. AI agent sends tool calls via MCP protocol
-3. Server uses VS Code APIs to manipulate the active notebook
+2. AI agent (Claude Code, Cursor Agent, etc.) sends tool calls via MCP protocol
+3. Server uses VS Code / Cursor APIs to manipulate the active notebook
 4. Changes appear instantly in the editor
 5. Outputs are captured and returned to the agent
 
-This enables true interactive notebook sessions with AI agents.
+This enables true interactive notebook sessions with AI agents in VS Code and Cursor.

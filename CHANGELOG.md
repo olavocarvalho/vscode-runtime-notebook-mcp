@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.4] - 2026-01-01
+
+### Changed
+
+- Improved README with architecture comparison (file-based vs Jupyter Server API vs Runtime API)
+- Reorganized images into `images/` folder
+
 ## [0.2.3] - 2025-12-31
 
 ### Added
