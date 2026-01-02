@@ -1,7 +1,7 @@
 {
   "name": "notebook-mcp-server",
-  "displayName": "Notebook MCP Server",
-  "description": "MCP server for Jupyter notebook manipulation in VS Code",
+  "displayName": "Native Jupyter Notebook MCP Server",
+  "description": "Expose VS Code Jupyter notebooks as MCP tools: read/edit/run cells and capture outputs (Cursor, Claude Code, Windsurf).",
   "version": "0.2.4",
   "publisher": "olavovieiradecarvalho",
   "license": "MIT",
@@ -18,7 +18,23 @@
     "vscode": "^1.85.0"
   },
   "categories": [
-    "Other"
+    "Notebooks",
+    "Data Science",
+    "AI"
+  ],
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "jupyter",
+    "notebook",
+    "ipynb",
+    "cursor",
+    "claude",
+    "claude-code",
+    "ai agent",
+    "data science",
+    "python",
+    "kernel"
   ],
   "activationEvents": [
     "onStartupFinished"

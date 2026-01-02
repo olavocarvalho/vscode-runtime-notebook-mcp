@@ -1,8 +1,10 @@
 
-# Notebook MCP Server
-![Notebook MCP Server](images/header.png)
+# Jupyter Notebook MCP Server
+![Jupyter Notebook MCP Server](images/header.png)
 
-A VS Code / Cursor extension that exposes Jupyter notebook manipulation via MCP (Model Context Protocol). Works with Claude Code, Cursor Agent, Windsurf, and any MCP-compatible AI assistant.
+A VS Code / Cursor extension that exposes Jupyter notebook manipulation via MCP (Model Context Protocol): read/edit/run cells and capture outputs. Works with Claude Code, Cursor Agent, Windsurf, and any MCP-compatible AI assistant.
+
+**Install:** [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=olavovieiradecarvalho.notebook-mcp-server) · [Open VSX](https://open-vsx.org/extension/olavovieiradecarvalho/notebook-mcp-server) · [GitHub](https://github.com/olavocarvalho/vscode-runtime-notebook-mcp)
 
 > [!IMPORTANT]
 > **This project is still pre-alpha** so it's very rough on the edge. Working in multiple windows is unstable.
@@ -93,9 +95,11 @@ We're introducing a third architecture - hooking directly into Cursor/VS Code's 
 
 ### Execution & Outputs
 
+To execute ad-hoc code, use `notebook_insert_cell` with `execute: true`. To execute an existing cell, use `notebook_run_cell`.
+
 | Tool | Description |
 |------|-------------|
-| `notebook_execute_code` | Execute code and return outputs |
+| `notebook_run_cell` | Execute an existing code cell by index and return outputs |
 | `notebook_clear_outputs` | Clear outputs of a specific cell |
 | `notebook_clear_all_outputs` | Clear outputs from all cells |
 
@@ -147,6 +151,13 @@ All tools support `response_format` parameter (`"markdown"` or `"json"`).
     {"content": "# Header", "type": "markdown"},
     {"content": "x = 1", "type": "code", "language": "python"}
   ],
+  "index": 0
+}
+```
+
+#### notebook_run_cell
+```json
+{
   "index": 0
 }
 ```
