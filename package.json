@@ -2,7 +2,7 @@
   "name": "notebook-mcp-server",
   "displayName": "Native Jupyter Notebook MCP Server",
   "description": "Expose VS Code Jupyter notebooks as MCP tools: read/edit/run cells and capture outputs (Cursor, Claude Code, Windsurf).",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "publisher": "olavovieiradecarvalho",
   "license": "MIT",
   "icon": "images/icon.png",

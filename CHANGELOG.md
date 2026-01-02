@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.5] - 2026-01-01
+
+### Changed
+
+- Improved package.json keywords and descriptions for better discoverability
+
 ## [0.2.4] - 2026-01-01
 
 ### Changed
