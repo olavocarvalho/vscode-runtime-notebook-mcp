@@ -5,13 +5,41 @@ import { ListCellsInputSchema, ResponseFormat, ResponseFormatSchema, CellIndexSc
 import { parseOutputs, formatOutputsAsMarkdown } from "../../utils/output.js";
 import { insertCells, deleteCells, waitForCellExecution, generateCellId, editCellContent, moveCell, checkCanModifyNotebook, checkCanReadNotebook } from "../../utils/notebook.js";
 
+// Track pending executions to prevent duplicate execution calls
+// Key: "notebookUri:cellIndex" or "notebookUri:cellId"
+const pendingExecutions = new Map<string, Promise<vscode.NotebookCell>>();
+
+/**
+ * Check if a cell is currently executing by examining execution timing.
+ * If startTime exists but endTime doesn't, the cell is still running.
+ */
+function isCellExecuting(cell: vscode.NotebookCell): boolean {
+  const timing = cell.executionSummary?.timing;
+  if (!timing) return false;
+  // If we have a start time but no end time, it's still executing
+  return timing.startTime !== undefined && timing.endTime === undefined;
+}
+
+/**
+ * Get execution key for tracking pending executions
+ */
+function getExecutionKey(notebookUri: string, cellIdentifier: string | number): string {
+  return `${notebookUri}:${cellIdentifier}`;
+}
+
+// Optional notebook_uri parameter for targeting specific notebooks
+// This allows operations to continue even if user switches tabs
+const NotebookUriSchema = z.string().optional().describe("Optional notebook URI to target. If not provided, uses the active notebook. Use notebook_list_open to get URIs.");
+
 const GetCellContentInputSchema = z.object({
   index: CellIndexSchema,
+  notebook_uri: NotebookUriSchema,
   response_format: ResponseFormatSchema
 }).strict();
 
 const GetCellOutputInputSchema = z.object({
   index: CellIndexSchema,
+  notebook_uri: NotebookUriSchema,
   response_format: ResponseFormatSchema
 }).strict();
 
@@ -21,21 +49,25 @@ const InsertCellInputSchema = z.object({
   index: z.number().int().min(0).optional().describe("Position to insert (default: append at end)"),
   language: z.string().default("python").describe("Language for code cells"),
   execute: z.boolean().default(false).describe("Execute the cell after insertion (code cells only)"),
+  notebook_uri: NotebookUriSchema,
   response_format: ResponseFormatSchema
 }).strict();
 
 const EditCellInputSchema = z.object({
   index: CellIndexSchema,
   content: z.string().describe("New content for the cell"),
+  notebook_uri: NotebookUriSchema,
   response_format: ResponseFormatSchema
 }).strict();
 
 const DeleteCellInputSchema = z.object({
   index: CellIndexSchema,
+  notebook_uri: NotebookUriSchema,
   response_format: ResponseFormatSchema
 }).strict();
 
 const GetOutlineInputSchema = z.object({
+  notebook_uri: NotebookUriSchema,
   response_format: ResponseFormatSchema
 }).strict();
 
@@ -43,17 +75,20 @@ const SearchInputSchema = z.object({
   query: z.string().min(1).describe("Search term"),
   case_sensitive: z.boolean().default(false).describe("Case-sensitive search"),
   context_lines: z.number().int().min(0).max(3).default(1).describe("Lines of context around matches"),
+  notebook_uri: NotebookUriSchema,
   response_format: ResponseFormatSchema
 }).strict();
 
 const ClearOutputsInputSchema = z.object({
   index: CellIndexSchema,
+  notebook_uri: NotebookUriSchema,
   response_format: ResponseFormatSchema
 }).strict();
 
 const MoveCellInputSchema = z.object({
   from_index: CellIndexSchema.describe("Current cell index"),
   to_index: CellIndexSchema.describe("Target cell index"),
+  notebook_uri: NotebookUriSchema,
   response_format: ResponseFormatSchema
 }).strict();
 
@@ -64,11 +99,13 @@ const BulkAddCellsInputSchema = z.object({
     language: z.string().default("python")
   })).min(1).describe("Array of cells to add"),
   index: z.number().int().min(0).optional().describe("Position to insert (default: end)"),
+  notebook_uri: NotebookUriSchema,
   response_format: ResponseFormatSchema
 }).strict();
 
 const RunCellInputSchema = z.object({
   index: CellIndexSchema,
+  notebook_uri: NotebookUriSchema,
   response_format: ResponseFormatSchema
 }).strict();
 
@@ -302,7 +339,8 @@ Args:
   - response_format ('markdown' | 'json'): Output format (default: 'markdown')`,
     InsertCellInputSchema.shape,
     async (params) => {
-      const accessCheck = checkCanModifyNotebook();
+      const parsed = InsertCellInputSchema.parse(params);
+      const accessCheck = await checkCanModifyNotebook(parsed.notebook_uri);
       if (!accessCheck.allowed) {
         return {
           content: [{ type: "text" as const, text: `Error: ${accessCheck.error}` }],
@@ -310,7 +348,6 @@ Args:
         };
       }
 
-      const parsed = InsertCellInputSchema.parse(params);
       const notebook = accessCheck.notebook!;
 
       // Create cell with tracking ID
@@ -338,34 +375,68 @@ Args:
 
       const cellIndex = notebook.getCells().indexOf(cell);
 
-      // Reveal the cell
-      accessCheck.editor!.revealRange(
-        new vscode.NotebookRange(cellIndex, cellIndex + 1),
-        vscode.NotebookEditorRevealType.InCenter
-      );
+      // Reveal the cell if editor is available
+      if (accessCheck.editor) {
+        accessCheck.editor.revealRange(
+          new vscode.NotebookRange(cellIndex, cellIndex + 1),
+          vscode.NotebookEditorRevealType.InCenter
+        );
+      }
 
       let executionResult = null;
 
       // Execute if requested and cell is code
       if (parsed.execute && parsed.type === "code") {
-        await vscode.commands.executeCommand("notebook.cell.execute", {
-          ranges: [{ start: cellIndex, end: cellIndex + 1 }],
-          document: notebook.uri
-        });
+        const executionKey = getExecutionKey(notebook.uri.toString(), cellId);
 
-        try {
-          const executedCell = await waitForCellExecution(notebook, cellId);
-          const outputs = parseOutputs(executedCell.outputs);
-          executionResult = {
-            success: executedCell.executionSummary?.success ?? false,
-            executionOrder: executedCell.executionSummary?.executionOrder ?? null,
-            outputs
-          };
-        } catch (error) {
-          executionResult = {
-            success: false,
-            error: error instanceof Error ? error.message : String(error)
-          };
+        // Check if there's already a pending execution for this cell (by ID)
+        if (pendingExecutions.has(executionKey)) {
+          console.log(`MCP: Cell ${cellId} already has pending execution, waiting for it...`);
+          try {
+            const executedCell = await pendingExecutions.get(executionKey)!;
+            const outputs = parseOutputs(executedCell.outputs);
+            executionResult = {
+              success: executedCell.executionSummary?.success ?? false,
+              executionOrder: executedCell.executionSummary?.executionOrder ?? null,
+              outputs,
+              note: "Returned result from already-pending execution"
+            };
+          } catch (error) {
+            executionResult = {
+              success: false,
+              error: error instanceof Error ? error.message : String(error)
+            };
+          }
+        } else {
+          // Create a promise for this execution that others can wait on
+          const executionPromise = (async (): Promise<vscode.NotebookCell> => {
+            await vscode.commands.executeCommand("notebook.cell.execute", {
+              ranges: [{ start: cellIndex, end: cellIndex + 1 }],
+              document: notebook.uri
+            });
+            return await waitForCellExecution(notebook, cellId);
+          })();
+
+          // Register the pending execution
+          pendingExecutions.set(executionKey, executionPromise);
+
+          try {
+            const executedCell = await executionPromise;
+            const outputs = parseOutputs(executedCell.outputs);
+            executionResult = {
+              success: executedCell.executionSummary?.success ?? false,
+              executionOrder: executedCell.executionSummary?.executionOrder ?? null,
+              outputs
+            };
+          } catch (error) {
+            executionResult = {
+              success: false,
+              error: error instanceof Error ? error.message : String(error)
+            };
+          } finally {
+            // Clean up the pending execution
+            pendingExecutions.delete(executionKey);
+          }
         }
       }
 
@@ -419,12 +490,12 @@ Args:
   - response_format ('markdown' | 'json'): Output format`,
     EditCellInputSchema.shape,
     async (params) => {
-      const accessCheck = checkCanModifyNotebook();
+      const parsed = EditCellInputSchema.parse(params);
+      const accessCheck = await checkCanModifyNotebook(parsed.notebook_uri);
       if (!accessCheck.allowed) {
         return { content: [{ type: "text" as const, text: `Error: ${accessCheck.error}` }], isError: true };
       }
 
-      const parsed = EditCellInputSchema.parse(params);
       const notebook = accessCheck.notebook!;
 
       if (parsed.index >= notebook.cellCount) {
@@ -453,12 +524,12 @@ Args:
   - response_format ('markdown' | 'json'): Output format`,
     DeleteCellInputSchema.shape,
     async (params) => {
-      const accessCheck = checkCanModifyNotebook();
+      const parsed = DeleteCellInputSchema.parse(params);
+      const accessCheck = await checkCanModifyNotebook(parsed.notebook_uri);
       if (!accessCheck.allowed) {
         return { content: [{ type: "text" as const, text: `Error: ${accessCheck.error}` }], isError: true };
       }
 
-      const parsed = DeleteCellInputSchema.parse(params);
       const notebook = accessCheck.notebook!;
 
       if (parsed.index >= notebook.cellCount) {
@@ -639,18 +710,21 @@ Args:
   - index (number): Cell index (0-based)`,
     ClearOutputsInputSchema.shape,
     async (params) => {
-      const accessCheck = checkCanModifyNotebook();
+      const parsed = ClearOutputsInputSchema.parse(params);
+      const accessCheck = await checkCanModifyNotebook(parsed.notebook_uri);
       if (!accessCheck.allowed) {
         return { content: [{ type: "text" as const, text: `Error: ${accessCheck.error}` }], isError: true };
       }
 
-      const { index, response_format } = ClearOutputsInputSchema.parse(params);
+      const { index, response_format } = parsed;
       if (index >= accessCheck.notebook!.cellCount) {
         return { content: [{ type: "text" as const, text: `Error: Cell index ${index} out of range.` }], isError: true };
       }
 
-      // Select the cell and clear its outputs
-      accessCheck.editor!.selection = new vscode.NotebookRange(index, index + 1);
+      // Select the cell and clear its outputs (requires editor)
+      if (accessCheck.editor) {
+        accessCheck.editor.selection = new vscode.NotebookRange(index, index + 1);
+      }
       await vscode.commands.executeCommand("notebook.cell.clearOutputs");
 
       if (response_format === ResponseFormat.JSON) {
@@ -664,17 +738,17 @@ Args:
   server.tool(
     "notebook_clear_all_outputs",
     `Clear outputs from all cells in the notebook.`,
-    { response_format: ResponseFormatSchema },
+    { response_format: ResponseFormatSchema, notebook_uri: NotebookUriSchema },
     async (params) => {
-      const accessCheck = checkCanModifyNotebook();
+      const parsed = z.object({ response_format: ResponseFormatSchema, notebook_uri: NotebookUriSchema }).parse(params);
+      const accessCheck = await checkCanModifyNotebook(parsed.notebook_uri);
       if (!accessCheck.allowed) {
         return { content: [{ type: "text" as const, text: `Error: ${accessCheck.error}` }], isError: true };
       }
 
       await vscode.commands.executeCommand("notebook.clearAllCellsOutputs");
 
-      const { response_format } = ListCellsInputSchema.parse(params);
-      if (response_format === ResponseFormat.JSON) {
+      if (parsed.response_format === ResponseFormat.JSON) {
         return { content: [{ type: "text" as const, text: JSON.stringify({ cleared: true, cellCount: accessCheck.notebook!.cellCount }, null, 2) }] };
       }
       return { content: [{ type: "text" as const, text: `Cleared outputs from all ${accessCheck.notebook!.cellCount} cells` }] };
@@ -691,12 +765,13 @@ Args:
   - to_index (number): Target position`,
     MoveCellInputSchema.shape,
     async (params) => {
-      const accessCheck = checkCanModifyNotebook();
+      const parsed = MoveCellInputSchema.parse(params);
+      const accessCheck = await checkCanModifyNotebook(parsed.notebook_uri);
       if (!accessCheck.allowed) {
         return { content: [{ type: "text" as const, text: `Error: ${accessCheck.error}` }], isError: true };
       }
 
-      const { from_index, to_index, response_format } = MoveCellInputSchema.parse(params);
+      const { from_index, to_index, response_format } = parsed;
       const notebook = accessCheck.notebook!;
 
       if (from_index >= notebook.cellCount || to_index >= notebook.cellCount) {
@@ -726,12 +801,13 @@ Args:
   - index (number, optional): Position to insert (default: append at end)`,
     BulkAddCellsInputSchema.shape,
     async (params) => {
-      const accessCheck = checkCanModifyNotebook();
+      const parsed = BulkAddCellsInputSchema.parse(params);
+      const accessCheck = await checkCanModifyNotebook(parsed.notebook_uri);
       if (!accessCheck.allowed) {
         return { content: [{ type: "text" as const, text: `Error: ${accessCheck.error}` }], isError: true };
       }
 
-      const { cells, index, response_format } = BulkAddCellsInputSchema.parse(params);
+      const { cells, index, response_format } = parsed;
       const notebook = accessCheck.notebook!;
       const insertIndex = index !== undefined ? Math.min(index, notebook.cellCount) : notebook.cellCount;
 
@@ -766,7 +842,8 @@ Args:
   - response_format ('markdown' | 'json'): Output format (default: 'markdown')`,
     RunCellInputSchema.shape,
     async (params) => {
-      const accessCheck = checkCanModifyNotebook();
+      const parsed = RunCellInputSchema.parse(params);
+      const accessCheck = await checkCanModifyNotebook(parsed.notebook_uri);
       if (!accessCheck.allowed) {
         return {
           content: [{ type: "text" as const, text: `Error: ${accessCheck.error}` }],
@@ -774,9 +851,8 @@ Args:
         };
       }
 
-      const parsed = RunCellInputSchema.parse(params);
       const notebook = accessCheck.notebook!;
-      const editor = accessCheck.editor!;
+      const editor = accessCheck.editor; // May be undefined if notebook not visible
 
       if (parsed.index >= notebook.cellCount) {
         return {
@@ -795,43 +871,121 @@ Args:
         };
       }
 
-      // Add tracking ID to the cell metadata if not present
-      const cellId = cell.metadata?.id || generateCellId();
-      if (!cell.metadata?.id) {
-        // Note: We can't easily update metadata on existing cells, so we use the index as fallback
-      }
+      const executionKey = getExecutionKey(notebook.uri.toString(), parsed.index);
 
-      // Reveal and select the cell
-      editor.revealRange(
-        new vscode.NotebookRange(parsed.index, parsed.index + 1),
-        vscode.NotebookEditorRevealType.InCenter
-      );
+      // Check if there's already a pending execution for this cell
+      if (pendingExecutions.has(executionKey)) {
+        console.log(`MCP: Cell ${parsed.index} already has pending execution, waiting for it...`);
+        try {
+          const executedCell = await pendingExecutions.get(executionKey)!;
+          const outputs = parseOutputs(executedCell.outputs);
+          const result = {
+            success: executedCell.executionSummary?.success ?? false,
+            cellIndex: parsed.index,
+            executionOrder: executedCell.executionSummary?.executionOrder ?? null,
+            outputs,
+            note: "Returned result from already-pending execution"
+          };
 
-      // Execute the cell
-      await vscode.commands.executeCommand("notebook.cell.execute", {
-        ranges: [{ start: parsed.index, end: parsed.index + 1 }],
-        document: notebook.uri
-      });
-
-      // Wait for execution to complete by polling executionSummary
-      const timeout = 60000;
-      const startTime = Date.now();
-      let executedCell = cell;
-
-      while (Date.now() - startTime < timeout) {
-        // Re-fetch the cell to get updated execution state
-        executedCell = notebook.cellAt(parsed.index);
-        if (typeof executedCell.executionSummary?.success === 'boolean') {
-          break;
+          if (parsed.response_format === ResponseFormat.JSON) {
+            return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
+          }
+          const lines = [`# Cell ${parsed.index} Execution Result`, "", `**Status**: ${result.success ? 'Success' : 'Failed'} (execution #${result.executionOrder})`, `**Note**: ${result.note}`, "", "## Output", formatOutputsAsMarkdown(outputs)];
+          return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+        } catch (error) {
+          return {
+            content: [{ type: "text" as const, text: `Error: Pending execution failed - ${error instanceof Error ? error.message : String(error)}` }],
+            isError: true
+          };
         }
-        await new Promise(resolve => setTimeout(resolve, 100));
       }
 
-      if (typeof executedCell.executionSummary?.success !== 'boolean') {
+      // Check if cell is currently executing (started by VS Code UI or another source)
+      if (isCellExecuting(cell)) {
+        console.log(`MCP: Cell ${parsed.index} is already executing, waiting for completion...`);
+        // Wait for the existing execution to complete
+        const timeout = 60000;
+        const startTime = Date.now();
+        let executedCell = cell;
+
+        while (Date.now() - startTime < timeout) {
+          executedCell = notebook.cellAt(parsed.index);
+          if (typeof executedCell.executionSummary?.success === 'boolean' && !isCellExecuting(executedCell)) {
+            break;
+          }
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+
+        if (typeof executedCell.executionSummary?.success !== 'boolean') {
+          return {
+            content: [{ type: "text" as const, text: "Error: Cell execution timed out while waiting for existing execution." }],
+            isError: true
+          };
+        }
+
+        const outputs = parseOutputs(executedCell.outputs);
+        const result = {
+          success: executedCell.executionSummary?.success ?? false,
+          cellIndex: parsed.index,
+          executionOrder: executedCell.executionSummary?.executionOrder ?? null,
+          outputs,
+          note: "Returned result from already-running execution"
+        };
+
+        if (parsed.response_format === ResponseFormat.JSON) {
+          return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
+        }
+        const lines = [`# Cell ${parsed.index} Execution Result`, "", `**Status**: ${result.success ? 'Success' : 'Failed'} (execution #${result.executionOrder})`, `**Note**: ${result.note}`, "", "## Output", formatOutputsAsMarkdown(outputs)];
+        return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+      }
+
+      // Reveal and select the cell if editor is available
+      if (editor) {
+        editor.revealRange(
+          new vscode.NotebookRange(parsed.index, parsed.index + 1),
+          vscode.NotebookEditorRevealType.InCenter
+        );
+      }
+
+      // Create a promise for this execution that others can wait on
+      const executionPromise = (async (): Promise<vscode.NotebookCell> => {
+        // Execute the cell
+        await vscode.commands.executeCommand("notebook.cell.execute", {
+          ranges: [{ start: parsed.index, end: parsed.index + 1 }],
+          document: notebook.uri
+        });
+
+        // Wait for execution to complete by polling executionSummary
+        const timeout = 60000;
+        const startTime = Date.now();
+        let executedCell = cell;
+
+        while (Date.now() - startTime < timeout) {
+          // Re-fetch the cell to get updated execution state
+          executedCell = notebook.cellAt(parsed.index);
+          if (typeof executedCell.executionSummary?.success === 'boolean') {
+            return executedCell;
+          }
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+
+        throw new Error("Cell execution timed out");
+      })();
+
+      // Register the pending execution
+      pendingExecutions.set(executionKey, executionPromise);
+
+      let executedCell: vscode.NotebookCell;
+      try {
+        executedCell = await executionPromise;
+      } catch (error) {
         return {
-          content: [{ type: "text" as const, text: "Error: Cell execution timed out." }],
+          content: [{ type: "text" as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
           isError: true
         };
+      } finally {
+        // Clean up the pending execution
+        pendingExecutions.delete(executionKey);
       }
 
       // Parse outputs

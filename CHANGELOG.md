@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0] - 2026-01-07
+
+### Added
+
+- **`notebook_get_kernel_context`** - New tool providing kernel state awareness:
+  - Current Python variables (name, type, shape, truncated value)
+  - Imported modules
+  - Recent cell execution history with output previews
+  - Enables more informed code generation by agents
+
+- **URI-based notebook targeting** - All tools now accept optional `notebook_uri` parameter:
+  - Operations continue even if user switches tabs during execution
+  - Use `notebook_list_open` to get notebook URIs
+  - More robust for long-running cell executions
+
+- **Duplicate execution prevention**:
+  - Tracks pending executions to prevent double-execution from retries
+  - Detects already-running cells and waits for completion instead of re-executing
+  - Returns cached results for duplicate rapid calls
+
+### Changed
+
+- `checkCanModifyNotebook()` and `checkCanReadNotebook()` are now async
+- Cell reveal operations are now optional (work even when notebook not visible)
+- Improved error messages with `notebook_uri` hint
+
 ## [0.2.5] - 2026-01-01
 
 ### Changed
