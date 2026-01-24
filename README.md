@@ -173,6 +173,7 @@ All tools support `response_format` parameter (`"markdown"` or `"json"`).
 {
   "mcpServers": {
     "notebook": {
+      "type" : "http",
       "url": "http://127.0.0.1:49777/mcp"
     }
   }
