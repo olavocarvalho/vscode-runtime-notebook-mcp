@@ -23,7 +23,8 @@ export class WorkspaceEdit {
 }
 
 export const workspace = {
-  applyEdit: async () => true
+  applyEdit: async () => true,
+  notebookDocuments: [] as any[]
 };
 
 export const NotebookCellKind = {
@@ -34,6 +35,7 @@ export const NotebookCellKind = {
 // Window state for multi-window tests
 export const window = {
   activeNotebookEditor: undefined as any,
+  visibleNotebookEditors: [] as any[],
   state: { focused: true }
 };
 

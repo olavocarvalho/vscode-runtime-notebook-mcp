@@ -156,19 +156,20 @@ export function registerCellTools(server: McpServer) {
   // notebook_list_cells
   server.tool(
     "notebook_list_cells",
-    "List all cells in the active notebook with metadata including type, language, content preview, and execution state.",
-    ListCellsInputSchema.shape,
+    "List all cells in a notebook with metadata including type, language, content preview, and execution state.",
+    { ...ListCellsInputSchema.shape, notebook_uri: NotebookUriSchema },
     async (params) => {
-      const editor = vscode.window.activeNotebookEditor;
-
-      if (!editor) {
+      const parsed = z.object({ ...ListCellsInputSchema.shape, notebook_uri: NotebookUriSchema }).parse(params);
+      const accessCheck = await checkCanReadNotebook(parsed.notebook_uri);
+      if (!accessCheck.allowed) {
         return {
-          content: [{ type: "text" as const, text: "Error: No active notebook. Open a .ipynb file first." }],
+          content: [{ type: "text" as const, text: `Error: ${accessCheck.error}` }],
           isError: true
         };
       }
 
-      const cells = editor.notebook.getCells().map((cell, index) => ({
+      const notebook = accessCheck.notebook!;
+      const cells = notebook.getCells().map((cell, index) => ({
         index,
         kind: cell.kind === vscode.NotebookCellKind.Code ? "code" : "markdown",
         language: cell.document.languageId,
@@ -179,7 +180,7 @@ export function registerCellTools(server: McpServer) {
       }));
 
       const output = { total: cells.length, cells };
-      const { response_format } = ListCellsInputSchema.parse(params);
+      const { response_format } = parsed;
 
       if (response_format === ResponseFormat.JSON) {
         return {
@@ -214,17 +215,16 @@ Args:
   - response_format ('markdown' | 'json'): Output format (default: 'markdown')`,
     GetCellContentInputSchema.shape,
     async (params) => {
-      const editor = vscode.window.activeNotebookEditor;
-
-      if (!editor) {
+      const parsed = GetCellContentInputSchema.parse(params);
+      const accessCheck = await checkCanReadNotebook(parsed.notebook_uri);
+      if (!accessCheck.allowed) {
         return {
-          content: [{ type: "text" as const, text: "Error: No active notebook. Open a .ipynb file first." }],
+          content: [{ type: "text" as const, text: `Error: ${accessCheck.error}` }],
           isError: true
         };
       }
 
-      const parsed = GetCellContentInputSchema.parse(params);
-      const notebook = editor.notebook;
+      const notebook = accessCheck.notebook!;
 
       if (parsed.index >= notebook.cellCount) {
         return {
@@ -271,17 +271,16 @@ Args:
   - response_format ('markdown' | 'json'): Output format (default: 'markdown')`,
     GetCellOutputInputSchema.shape,
     async (params) => {
-      const editor = vscode.window.activeNotebookEditor;
-
-      if (!editor) {
+      const parsed = GetCellOutputInputSchema.parse(params);
+      const accessCheck = await checkCanReadNotebook(parsed.notebook_uri);
+      if (!accessCheck.allowed) {
         return {
-          content: [{ type: "text" as const, text: "Error: No active notebook. Open a .ipynb file first." }],
+          content: [{ type: "text" as const, text: `Error: ${accessCheck.error}` }],
           isError: true
         };
       }
 
-      const parsed = GetCellOutputInputSchema.parse(params);
-      const notebook = editor.notebook;
+      const notebook = accessCheck.notebook!;
 
       if (parsed.index >= notebook.cellCount) {
         return {
@@ -555,12 +554,14 @@ Args:
 Useful for navigating large notebooks without reading all cell contents.`,
     GetOutlineInputSchema.shape,
     async (params) => {
-      const editor = vscode.window.activeNotebookEditor;
-      if (!editor) {
-        return { content: [{ type: "text" as const, text: "Error: No active notebook." }], isError: true };
+      const parsed = GetOutlineInputSchema.parse(params);
+      const accessCheck = await checkCanReadNotebook(parsed.notebook_uri);
+      if (!accessCheck.allowed) {
+        return { content: [{ type: "text" as const, text: `Error: ${accessCheck.error}` }], isError: true };
       }
 
-      const { response_format } = GetOutlineInputSchema.parse(params);
+      const notebook = accessCheck.notebook!;
+      const { response_format } = parsed;
       const outline: Array<{
         cellIndex: number;
         cellType: string;
@@ -568,7 +569,7 @@ Useful for navigating large notebooks without reading all cell contents.`,
         items: Array<{ type: string; level?: number; name: string; line: number }>;
       }> = [];
 
-      for (const cell of editor.notebook.getCells()) {
+      for (const cell of notebook.getCells()) {
         const text = cell.document.getText();
         const lines = text.split("\n");
         const items: Array<{ type: string; level?: number; name: string; line: number }> = [];
@@ -635,19 +636,21 @@ Args:
   - response_format ('markdown' | 'json'): Output format`,
     SearchInputSchema.shape,
     async (params) => {
-      const editor = vscode.window.activeNotebookEditor;
-      if (!editor) {
-        return { content: [{ type: "text" as const, text: "Error: No active notebook." }], isError: true };
+      const parsed = SearchInputSchema.parse(params);
+      const accessCheck = await checkCanReadNotebook(parsed.notebook_uri);
+      if (!accessCheck.allowed) {
+        return { content: [{ type: "text" as const, text: `Error: ${accessCheck.error}` }], isError: true };
       }
 
-      const { query, case_sensitive, context_lines, response_format } = SearchInputSchema.parse(params);
+      const notebook = accessCheck.notebook!;
+      const { query, case_sensitive, context_lines, response_format } = parsed;
       const results: Array<{
         cellIndex: number;
         cellType: string;
         matches: Array<{ line: number; text: string; context?: string[] }>;
       }> = [];
 
-      for (const cell of editor.notebook.getCells()) {
+      for (const cell of notebook.getCells()) {
         const text = cell.document.getText();
         const lines = text.split("\n");
         const searchQuery = case_sensitive ? query : query.toLowerCase();
@@ -721,10 +724,13 @@ Args:
         return { content: [{ type: "text" as const, text: `Error: Cell index ${index} out of range.` }], isError: true };
       }
 
-      // Select the cell and clear its outputs (requires editor)
-      if (accessCheck.editor) {
-        accessCheck.editor.selection = new vscode.NotebookRange(index, index + 1);
+      // clearOutputs command operates on the active editor's selection — requires the target notebook to be the active editor
+      const activeEditor = vscode.window.activeNotebookEditor;
+      if (!accessCheck.editor || activeEditor?.notebook.uri.toString() !== accessCheck.notebook!.uri.toString()) {
+        return { content: [{ type: "text" as const, text: "Error: Cannot clear outputs — the target notebook must be the active tab. Switch to it and retry, or use notebook_uri to be explicit." }], isError: true };
       }
+
+      accessCheck.editor.selection = new vscode.NotebookRange(index, index + 1);
       await vscode.commands.executeCommand("notebook.cell.clearOutputs");
 
       if (response_format === ResponseFormat.JSON) {
@@ -744,6 +750,12 @@ Args:
       const accessCheck = await checkCanModifyNotebook(parsed.notebook_uri);
       if (!accessCheck.allowed) {
         return { content: [{ type: "text" as const, text: `Error: ${accessCheck.error}` }], isError: true };
+      }
+
+      // clearAllCellsOutputs command operates on the active editor — requires the target notebook to be the active editor
+      const activeEditorForClear = vscode.window.activeNotebookEditor;
+      if (!accessCheck.editor || activeEditorForClear?.notebook.uri.toString() !== accessCheck.notebook!.uri.toString()) {
+        return { content: [{ type: "text" as const, text: "Error: Cannot clear outputs — the target notebook must be the active tab. Switch to it and retry, or use notebook_uri to be explicit." }], isError: true };
       }
 
       await vscode.commands.executeCommand("notebook.clearAllCellsOutputs");

@@ -6,6 +6,7 @@ import { parseOutputs, formatOutputsAsMarkdown } from "../../utils/output.js";
 import { checkCanReadNotebook } from "../../utils/notebook.js";
 
 const GetKernelInfoInputSchema = z.object({
+  notebook_uri: z.string().optional().describe("Optional notebook URI to target. If not provided, uses the active notebook."),
   response_format: ResponseFormatSchema
 }).strict();
 
@@ -131,21 +132,21 @@ Args:
   - response_format ('markdown' | 'json'): Output format (default: 'markdown')`,
     GetKernelInfoInputSchema.shape,
     async (params) => {
-      const editor = vscode.window.activeNotebookEditor;
-
-      if (!editor) {
+      const parsed = GetKernelInfoInputSchema.parse(params);
+      const accessCheck = await checkCanReadNotebook(parsed.notebook_uri);
+      if (!accessCheck.allowed) {
         return {
-          content: [{ type: "text" as const, text: "Error: No active notebook. Open a .ipynb file first." }],
+          content: [{ type: "text" as const, text: `Error: ${accessCheck.error}` }],
           isError: true
         };
       }
 
-      const parsed = GetKernelInfoInputSchema.parse(params);
+      const notebook = accessCheck.notebook!;
 
       let kernel: any;
       try {
         const jupyter = await getJupyterAPI();
-        kernel = await jupyter.kernels.getKernel(editor.notebook.uri);
+        kernel = await jupyter.kernels.getKernel(notebook.uri);
       } catch (error) {
         return {
           content: [{ type: "text" as const, text: `Error: Unable to access Jupyter extension. ${error instanceof Error ? error.message : String(error)}` }],
@@ -163,7 +164,7 @@ Args:
       const output = {
         language: kernel.language || "unknown",
         status: kernel.status || "unknown",
-        notebookUri: editor.notebook.uri.toString()
+        notebookUri: notebook.uri.toString()
       };
 
       if (parsed.response_format === ResponseFormat.JSON) {

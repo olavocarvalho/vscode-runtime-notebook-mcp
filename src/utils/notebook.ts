@@ -160,7 +160,7 @@ export function getNotebookEditor(notebook: vscode.NotebookDocument): vscode.Not
 
 /**
  * Resolve which notebook to use for an operation.
- * Priority: 1) Explicit URI parameter, 2) Active notebook editor
+ * Priority: 1) Explicit URI parameter, 2) Active notebook editor, 3) Single open notebook fallback
  *
  * This allows operations to continue even if user switches tabs,
  * as long as the notebook document is still open.
@@ -184,46 +184,71 @@ export async function resolveNotebook(notebookUri?: string): Promise<NotebookAcc
     };
   }
 
-  // Fall back to active notebook editor
+  // Try active notebook editor first
   const editor = vscode.window.activeNotebookEditor;
-  if (!editor) {
+  if (editor) {
+    return {
+      allowed: true,
+      notebook: editor.notebook,
+      editor
+    };
+  }
+
+  // Fallback: find notebook from open documents (handles tab-switch scenario)
+  const openNotebooks = vscode.workspace.notebookDocuments.filter(
+    doc => doc.notebookType === 'jupyter-notebook'
+  );
+
+  if (openNotebooks.length === 1) {
+    // Unambiguous — only one notebook open
+    const notebook = openNotebooks[0];
+    return {
+      allowed: true,
+      notebook,
+      editor: getNotebookEditor(notebook)
+    };
+  }
+
+  if (openNotebooks.length > 1) {
+    // Check if exactly one Jupyter notebook is visible (e.g., in a split view)
+    const openUris = new Set(openNotebooks.map(nb => nb.uri.toString()));
+    const visibleJupyterEditors = vscode.window.visibleNotebookEditors.filter(
+      editor => openUris.has(editor.notebook.uri.toString())
+    );
+    if (visibleJupyterEditors.length === 1) {
+      return {
+        allowed: true,
+        notebook: visibleJupyterEditors[0].notebook,
+        editor: visibleJupyterEditors[0]
+      };
+    }
+
+    // Multiple notebooks open, ambiguous — list them so the agent can retry with a URI
+    const listing = openNotebooks
+      .map(nb => `  - ${nb.uri.path.split("/").pop()}: ${nb.uri.toString()}`)
+      .join("\n");
     return {
       allowed: false,
-      error: "No active notebook. Open a .ipynb file first, or specify notebook_uri parameter."
+      error: `Multiple notebooks are open. Specify notebook_uri to target one:\n${listing}`
     };
   }
 
   return {
-    allowed: true,
-    notebook: editor.notebook,
-    editor
+    allowed: false,
+    error: "No notebook open. Open a .ipynb file first."
   };
 }
 
 /**
  * Check if notebook modifications are safe.
- * Returns error if:
- * - No active notebook (and no URI provided)
- * - Window is not focused (modifications would happen in background)
+ * Currently identical to checkCanReadNotebook — kept separate as a semantic
+ * marker so future versions can add additional guards for modifications
+ * (e.g., requiring a visible editor for certain operations).
  *
  * @param notebookUri Optional URI to target a specific notebook
  */
 export async function checkCanModifyNotebook(notebookUri?: string): Promise<NotebookAccessResult> {
-  const result = await resolveNotebook(notebookUri);
-  if (!result.allowed) {
-    return result;
-  }
-
-  // Check if this window is focused (only for implicit active notebook)
-  // If explicit URI was provided, we trust the caller knows what they're doing
-  if (!notebookUri && !vscode.window.state.focused) {
-    return {
-      allowed: false,
-      error: "Cannot modify notebook: This VS Code window is not focused.\n\nThe MCP server is running here but you appear to be working in another window.\n\nTo fix this:\n1. Switch to this VS Code window, OR\n2. Click '→ Activate' in the other window's status bar to move the server there"
-    };
-  }
-
-  return result;
+  return await resolveNotebook(notebookUri);
 }
 
 /**

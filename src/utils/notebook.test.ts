@@ -89,19 +89,22 @@ describe('checkCanModifyNotebook', () => {
   beforeEach(() => {
     // Reset mock state before each test
     (vscode.window as any).activeNotebookEditor = undefined;
+    (vscode.window as any).visibleNotebookEditors = [];
+    (vscode.workspace as any).notebookDocuments = [];
     (vscode.window as any).state = { focused: true };
   });
 
-  it('returns error when no active notebook editor', async () => {
+  it('returns error when no notebooks are open', async () => {
     (vscode.window as any).activeNotebookEditor = undefined;
+    (vscode.workspace as any).notebookDocuments = [];
 
     const result = await checkCanModifyNotebook();
 
     expect(result.allowed).toBe(false);
-    expect(result.error).toContain('No active notebook');
+    expect(result.error).toContain('No notebook open');
   });
 
-  it('returns error when window not focused', async () => {
+  it('allows modifications even when window not focused', async () => {
     const mockNotebook = { uri: { path: '/test.ipynb' } };
     const mockEditor = { notebook: mockNotebook };
     (vscode.window as any).activeNotebookEditor = mockEditor;
@@ -109,8 +112,9 @@ describe('checkCanModifyNotebook', () => {
 
     const result = await checkCanModifyNotebook();
 
-    expect(result.allowed).toBe(false);
-    expect(result.error).toContain('not focused');
+    // MCP-driven modifications should work regardless of window focus
+    expect(result.allowed).toBe(true);
+    expect(result.notebook).toBe(mockNotebook);
   });
 
   it('returns allowed with notebook when editor exists and window focused', async () => {
@@ -126,16 +130,40 @@ describe('checkCanModifyNotebook', () => {
     expect(result.editor).toBe(mockEditor);
   });
 
-  it('includes helpful error message with instructions', async () => {
-    const mockNotebook = { uri: { path: '/test.ipynb' } };
-    const mockEditor = { notebook: mockNotebook };
-    (vscode.window as any).activeNotebookEditor = mockEditor;
-    (vscode.window as any).state = { focused: false };
+  it('falls back to single open notebook when no active editor', async () => {
+    const mockNotebook = {
+      uri: { path: '/test.ipynb', toString: () => 'file:///test.ipynb' },
+      notebookType: 'jupyter-notebook'
+    };
+    (vscode.window as any).activeNotebookEditor = undefined;
+    (vscode.workspace as any).notebookDocuments = [mockNotebook];
+    (vscode.window as any).visibleNotebookEditors = [];
 
     const result = await checkCanModifyNotebook();
 
-    expect(result.error).toContain('Activate');
-    expect(result.error).toContain('another window');
+    expect(result.allowed).toBe(true);
+    expect(result.notebook).toBe(mockNotebook);
+  });
+
+  it('returns error listing notebooks when multiple are open and ambiguous', async () => {
+    const mockNotebook1 = {
+      uri: { path: '/test1.ipynb', toString: () => 'file:///test1.ipynb' },
+      notebookType: 'jupyter-notebook'
+    };
+    const mockNotebook2 = {
+      uri: { path: '/test2.ipynb', toString: () => 'file:///test2.ipynb' },
+      notebookType: 'jupyter-notebook'
+    };
+    (vscode.window as any).activeNotebookEditor = undefined;
+    (vscode.workspace as any).notebookDocuments = [mockNotebook1, mockNotebook2];
+    (vscode.window as any).visibleNotebookEditors = [];
+
+    const result = await checkCanModifyNotebook();
+
+    expect(result.allowed).toBe(false);
+    expect(result.error).toContain('Multiple notebooks');
+    expect(result.error).toContain('test1.ipynb');
+    expect(result.error).toContain('test2.ipynb');
   });
 });
 
@@ -143,19 +171,22 @@ describe('checkCanReadNotebook', () => {
   beforeEach(() => {
     // Reset mock state before each test
     (vscode.window as any).activeNotebookEditor = undefined;
+    (vscode.window as any).visibleNotebookEditors = [];
+    (vscode.workspace as any).notebookDocuments = [];
     (vscode.window as any).state = { focused: true };
   });
 
-  it('returns error when no active notebook editor', async () => {
+  it('returns error when no notebooks are open', async () => {
     (vscode.window as any).activeNotebookEditor = undefined;
+    (vscode.workspace as any).notebookDocuments = [];
 
     const result = await checkCanReadNotebook();
 
     expect(result.allowed).toBe(false);
-    expect(result.error).toContain('No active notebook');
+    expect(result.error).toContain('No notebook open');
   });
 
-  it('returns allowed even when window not focused (key difference from modify)', async () => {
+  it('returns allowed even when window not focused', async () => {
     const mockNotebook = { uri: { path: '/test.ipynb' } };
     const mockEditor = { notebook: mockNotebook };
     (vscode.window as any).activeNotebookEditor = mockEditor;
@@ -163,7 +194,6 @@ describe('checkCanReadNotebook', () => {
 
     const result = await checkCanReadNotebook();
 
-    // Read operations should work even when window is not focused
     expect(result.allowed).toBe(true);
     expect(result.notebook).toBe(mockNotebook);
   });
@@ -179,6 +209,20 @@ describe('checkCanReadNotebook', () => {
     expect(result.allowed).toBe(true);
     expect(result.notebook).toBe(mockNotebook);
     expect(result.editor).toBe(mockEditor);
+  });
+
+  it('falls back to single open notebook when no active editor', async () => {
+    const mockNotebook = {
+      uri: { path: '/test.ipynb', toString: () => 'file:///test.ipynb' },
+      notebookType: 'jupyter-notebook'
+    };
+    (vscode.window as any).activeNotebookEditor = undefined;
+    (vscode.workspace as any).notebookDocuments = [mockNotebook];
+
+    const result = await checkCanReadNotebook();
+
+    expect(result.allowed).toBe(true);
+    expect(result.notebook).toBe(mockNotebook);
   });
 });
 

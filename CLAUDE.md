@@ -73,9 +73,13 @@ const cell = notebook.getCells().find(c => c.metadata.id === cellId);
 
 This distinction matters: cell IDs are an implementation detail for reliable async tracking, not part of the agent API.
 
-### Multi-Window Safety
+### Focus-Independent Operation
 
-Check `vscode.window.state.focused` before modifications - prevents executing in unfocused background windows.
+All MCP tools work regardless of which tab is focused. When no `notebook_uri` is provided:
+1. Uses `activeNotebookEditor` if available
+2. Falls back to single open notebook (unambiguous)
+3. Falls back to single visible notebook editor
+4. Returns error listing open notebooks with URIs if ambiguous
 
 ## Tool Design
 
